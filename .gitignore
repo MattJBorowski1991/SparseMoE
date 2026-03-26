@@ -1,0 +1,11 @@
+# Build and temporary files
+*.o
+*.so
+*.exe
+*.egg-info/
+
+# Python cache
+__pycache__/
+
+# Profiling outputs
+prof/ncu/
