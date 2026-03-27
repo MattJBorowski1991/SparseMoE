@@ -6,6 +6,8 @@ using namespace nvcuda;         // Brings wmma:: into scope
 #include <assert.h>
 
 #define MOE_KERNEL capacity
+// capacity variant requires capacity-aware allocations
+#define MOE_USES_CAPACITY 1
 
 template<bool calculatePerExpert>
 static __device__ __forceinline__ void wmma_db(

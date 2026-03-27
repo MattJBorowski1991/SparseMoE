@@ -5,6 +5,8 @@ using namespace nvcuda;         // Brings wmma:: into scope
 #include <stdio.h>
 
 #define MOE_KERNEL baseline
+// baseline variant does not use capacity-based allocations
+#define MOE_USES_CAPACITY 0
 
 template<bool calculatePerExpert>
 static __device__ __forceinline__ void wmma_db(
@@ -140,12 +142,15 @@ static __device__ __forceinline__ void wmma_db(
 static __device__ __forceinline__ void fp32_to_fp16(
     const float* __restrict__ input,        // hidden_mlp_layer_1_out
     half* __restrict__ output,              // hidden_mlp_layer_1_out_fp16
-    int total_size                          // num_experts * ( N * (up_proj_dim * d_model) )
+    int rows_per_expert                      // rows per expert (N or CAP)
 ){  
     const int batch = blockIdx.z;
 
-    const float* input_b = input + batch * num_experts * N * (up_proj_dim * d_model);
-    half* output_b = output + batch *  num_experts * N * (up_proj_dim * d_model);
+    const int elems_per_expert = rows_per_expert * (up_proj_dim * d_model);
+    const int total_size = num_experts * elems_per_expert;
+
+    const float* input_b = input + batch * total_size;
+    half* output_b = output + batch * total_size;
 
     const int block_linear = blockIdx.y * gridDim.x + blockIdx.x;
     const int global_tid = block_linear * blockDim.x + threadIdx.x;
@@ -466,6 +471,9 @@ __global__ void baseline(MoEArgs args){
     // **** list of kernel arguments: end ****
 
 
+    // Be aware of host-provided CAP option (not used in baseline logic).
+    int CAP_from_args = args.use_capacity ? args.cap : N;
+
     zero_final_output_and_expert_counts(final_output, expert_counts);
 
     wmma_db<false>(1.0f, input, router_weights, expert_logits, N, num_experts, d_model);
@@ -483,13 +491,16 @@ __global__ void baseline(MoEArgs args){
 
     assign_per_expert_wmma_inputs(input, expert_counts, expert_token_ids, per_expert_wmma_inputs);
 
-    wmma_db<true>(1.0f, per_expert_wmma_inputs, expert_up_proj_weights, hidden_mlp_layer_1_out, num_experts * N, up_proj_dim * d_model, d_model);
+    // Use host-provided CAP when available to match allocation sizes
+    int rows_per_expert = CAP_from_args;
 
-    fp32_to_fp16(hidden_mlp_layer_1_out, hidden_mlp_layer_1_out_fp16, num_experts * N * up_proj_dim * d_model);
+    wmma_db<true>(1.0f, per_expert_wmma_inputs, expert_up_proj_weights, hidden_mlp_layer_1_out, num_experts * rows_per_expert, up_proj_dim * d_model, d_model);
+
+    fp32_to_fp16(hidden_mlp_layer_1_out, hidden_mlp_layer_1_out_fp16, rows_per_expert);
 
     __syncthreads(); // ensure fp32->fp16 conversion is complete before second GEMM
 
-    wmma_db<true>(1.0f, hidden_mlp_layer_1_out_fp16, expert_down_proj_weights, hidden_mlp_layer_2_out, num_experts * N, d_model, up_proj_dim * d_model);
+    wmma_db<true>(1.0f, hidden_mlp_layer_1_out_fp16, expert_down_proj_weights, hidden_mlp_layer_2_out, num_experts * rows_per_expert, d_model, up_proj_dim * d_model);
 
     __syncthreads(); // ensure hidden_mlp_layer_2_out is fully written before combine reads it
 

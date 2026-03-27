@@ -29,6 +29,7 @@ MoEArgs allocate_and_copy_to_device(
 ) {
     MoEArgs args;
     args.num_batches = num_batches;
+    args.use_capacity = use_capacity;
 
     // auto print_mem_info = [&](const char* name, size_t req){
     //     size_t free_bytes = 0, total_bytes = 0;
@@ -82,6 +83,7 @@ MoEArgs allocate_and_copy_to_device(
         int CAP_raw = (int)ceilf((float)N * (float)k / (float)num_experts * capacity_factor);
         CAP = ((CAP_raw + WMMA_M - 1) / WMMA_M) * WMMA_M; // pad up to the next wmma size so we can use tensor cores
     }
+    args.cap = CAP;
 
     // Allocate intermediate buffers (device-only, will be initialized by kernel)
     {

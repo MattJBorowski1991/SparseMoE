@@ -24,4 +24,7 @@ struct MoEArgs {
     float* final_output;                                   // [N, d_model]
     //number of batches
     int num_batches;
+    // capacity option (host computed). If true, `cap` holds the per-expert CAP value used by capacity variant.
+    bool use_capacity;
+    int cap;
 };

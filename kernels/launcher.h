@@ -24,6 +24,11 @@ extern "C" void solve(MoEArgs args){
 
     CHECK_CUDA(cudaEventRecord(start));
 
+    // Ensure the launcher sets the per-kernel capacity flag according to the kernel's declaration
+#ifdef MOE_USES_CAPACITY
+    args.use_capacity = (MOE_USES_CAPACITY != 0);
+#endif
+
     MOE_LAUNCH(args);
 
     CHECK_CUDA(cudaGetLastError());

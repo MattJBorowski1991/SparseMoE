@@ -1,79 +1,80 @@
-# Sparse Mixture-of-Experts (MoE) Block — Overview
+# Sparse Mixture-of-Experts (MoE) — Overview
 
-Input to a sparse MoE block is a matrix of token attention-based embeddings.
+A lightweight reference implementation of a sparse Mixture-of-Experts block targeting CUDA/Wmma tensor-core GEMMs. The repository contains three execution variants used for performance and correctness experiments:
+
+- `unfused`: per-stage kernels, `CAP = N` (naïve, memory-heavy)
+- `baseline`: fused kernels with per-token routing but still overallocated per-expert buffers
+- `capacity`: capacity-aware routing that packs routed tokens into per-expert buffers of size `CAP` to enable larger, more efficient GEMMs
+
+This README summarizes the block architecture, capacity semantics, and where to find the kernel implementations and profiling notes.
+
+## TL;DR
+
+- Capacity-aware packing reduces DRAM footprint and enables grouped GEMMs.
+- CAP = ceil(N * k / num_experts * capacity_factor), then rounded up to the nearest WMMA tile multiple.
+- Overflow policy: drop excess routes beyond `CAP`.
 
 ## Architecture
 
-### 1. Input
+Input shape: `[num_batches, N, d_model]` — tokens batched by sequence length `N` and model width `d_model`.
 
-Input shape: `[num_batches, N, d_model]`, where `N` is the sequence length.
+1. Router
+   - Tiny linear projection per token: `[N, d_model] -> [N, num_experts]`.
+2. Top-k selection
+   - For each token select top-`k` experts and compute gated softmax weights: outputs are `indices [N, k]` and `weights [N, k]`.
+3. Dispatch / Pack
+   - Scatter selected tokens into contiguous per-expert buffers of shape `[num_experts, CAP, d_model]`.
+   - `CAP` is computed per the formula below; empty slots are padded with zeros.
+   - If an expert receives more than `CAP` assignments, extra routes are dropped.
+4. Expert compute
+   - Each expert processes its packed buffer: `[m, d_model] -> up-proj -> activation -> down-proj -> [m, d_model]` where `m` ≤ `CAP`.
+   - Implementations use WMMA-friendly tiling; matrices are padded to WMMA tile sizes.
+5. Combine
+   - Multiply expert outputs by their gating weights and scatter-accumulate back into `[N, d_model]`.
 
-### 2. Router (tiny linear layer)
+## Capacity (CAP) details
 
-The router projects each token to per-expert logits:
-
-`[N, d_model] -> [N, num_experts]`
-
-### 3. Top-k + gating weights
-
-Per-token: select top-k experts (e.g. `k=4`) and compute softmax gating weights.
-
-`[N, num_experts] -> routing indices [N, k] and weights [N, k]`.
-
-### 4. Dispatch
-
-Scatter/sort tokens into expert-contiguous buffers of shape `[num_experts, CAP, d_model]`. where we `CAP`= capacity per-expert
-For example (k=2, 5 tokens):
-
-- Expert0 buffer: [ slot0=T0, slot1=T3 ]
-- Expert1 buffer: [ slot0=T2, slot1=T5 ]
-- Expert2 buffer: [ slot0=T1, slot1=T4 ]
-
-### 5. Expert compute (per expert)
-
-Each expert runs its MLP on its buffer. Not all slots may be occupied, so the number of active tokens `m` can be < capacity.
-
-For `m` tokens: `[m, d_model] -> up-proj -> [m, d_ff] -> activation -> down-proj -> [m, d_model]`.
-
-### 6. Combine
-
-Multiply each expert output by its gating weight, sum the `k` contributions per token to produce `[N, d_model]`, and restore the original token order.
-
-## Kernels
-
-### Unfused
-
-All global kernels launched seperately in sequence with `CAP = N`.
-
-### Baseline
-
-All kernels from Unfused fused into one global kernel. 
-
-## Capacity
-
-
-Compute per-expert capacity `CAP` dependent on `capacity_factor` and and assign slots up to that capacity; apply an overflow policy for excess assignments.
-
-Capacity (per expert) computed as:
+Compute CAP (per expert):
 
 ```
-CAP = ceil(N * k / num_experts * capacity_factor)
+CAP_raw = ceil(N * k / num_experts * capacity_factor)
+CAP = ceil(CAP_raw / WMMA_M) * WMMA_M  // round up to WMMA_M multiple
 ```
 
-and then roundup to the nearest wmma tile size.
+Notes:
+- Padding: slots between `m` (actual routed tokens) and `CAP` are zeroed before GEMMs so padded rows do not affect results.
+- Overflow: any route that maps to a slot ≥ `CAP` is dropped. To avoid out-of-bounds reads, the implementation clamps `expert_counts[e] = min(expert_counts[e], CAP)` after packing.
 
-The goal is to pack each expert's routed token vectors into fixed-size, contiguous per-expert tensors so we can execute larger, more efficient GEMMs (per-expert or grouped across experts) instead of many small GEMMs.
+## Kernels and important files
 
-Overflow policy: drop.
+- Kernel implementations: `kernels/unfused.cu`, `kernels/baseline.cu`, `kernels/capacity.cu`.
+- Host-side allocation and data plumbing: `inputs/data.cu`, `inputs/data.h`.
+- Driver entry point: `drivers/main.cu`.
+- Profiling notes and NCU outputs: `prof/txt/` and `prof/md/`.
 
-## Next steps
+## Profiling
 
-### Profile for both Prefill (large N) and Decode (N = 1)
+Run the provided experiments (see `Makefile`) and collect Nsight Compute (`ncu`) reports for the `baseline` and `capacity` variants. The `prof/md/run1/notes.md` file contains a concise comparison of an example run that demonstrates the performance and memory throughput differences.
 
-### Grouped GEMM (alternative)
+## Building & running
 
-Concatenate expert buffers (pad empty slots to `CAP`) and perform grouped GEMM. Mask out padded outputs afterward.
+Quick start (Linux, CUDA enabled):
 
+```bash
+make clean && make -j
+# then run the produced binary in bin/ (project-specific runner)
+```
 
+If your GPU memory is limited, try the `capacity` variant which reduces per-expert allocations.
 
+## Next steps / ideas
 
+- Per-kernel Nsight Compute analysis to identify cache/DRAM bottlenecks.
+- Grouped GEMM: concatenate expert buffers and run a batched/grouped GEMM, masking out padded rows afterward.
+- Tune tile sizes and shared-memory usage for better occupancy.
+
+---
+
+If you want, I can also:
+- add a short Usage / CLI section with exact run commands, or
+- create a one-slide summary (PNG/SVG) of the profiling comparison.

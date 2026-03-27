@@ -78,8 +78,8 @@ int main(int argc, char** argv){
     initialize_host_data(h_input, h_final_output, h_expert_up_proj_weights, h_expert_down_proj_weights);
 
     printf("Allocating and copying data to device ... \n");
-    // enable capacity-aware allocations
-    bool use_capacity = true;
+    // enable capacity-aware allocations only when running the `capacity` kernel
+    bool use_capacity = (kernel != "baseline");
     MoEArgs args = allocate_and_copy_to_device(h_input, h_final_output, h_expert_up_proj_weights, h_expert_down_proj_weights, use_capacity);
 
 
