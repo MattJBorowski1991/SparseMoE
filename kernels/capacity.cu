@@ -283,6 +283,26 @@ static __device__ __forceinline__ void build_per_expert_buffers(
 }
 
 
+static __device__ __forceinline__ void clamp_expert_counts(
+    int* __restrict__ expert_counts
+){
+    const int batch = blockIdx.z;
+
+    int CAP_raw = (int)ceilf((float)N * (float)k / (float)num_experts * capacity_factor);
+    int CAP = ((CAP_raw + WMMA_M - 1) / WMMA_M) * WMMA_M;
+
+    int* expert_counts_b = expert_counts + batch * num_experts;
+
+    const int global_tid = blockIdx.x * blockDim.x + threadIdx.x;
+    const int global_stride = gridDim.x * blockDim.x;
+
+    for (int idx = global_tid; idx < num_experts; idx += global_stride) {
+        int v = expert_counts_b[idx];
+        if (v > CAP) expert_counts_b[idx] = CAP;
+    }
+}
+
+
 static __device__ __forceinline__ void assign_per_expert_wmma_inputs(
     const half* __restrict__ input,                  // [N, d_model]
     const int* __restrict__ expert_counts,           // [num_experts]
@@ -462,7 +482,11 @@ __global__ void capacity(MoEArgs args){
     __syncthreads(); // ensure selected_expert_indices/weights are globally visible before build_per_expert_buffers reads them
 
     build_per_expert_buffers(selected_expert_indices, selected_expert_weights, expert_counts, expert_token_ids, expert_token_weights); 
-    __syncthreads(); // ensure expert_token_ids/weights and expert_counts are globally visible before assign reads them
+    __syncthreads(); // ensure expert_token_ids/weights and expert_counts are visible to this block
+
+    // Clamp expert counts to CAP to avoid out-of-bounds reads/writes in subsequent kernels
+    clamp_expert_counts(expert_counts);
+    __syncthreads();
 
     assign_per_expert_wmma_inputs(input, expert_counts, expert_token_ids, per_expert_wmma_inputs);
 

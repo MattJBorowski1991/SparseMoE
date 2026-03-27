@@ -102,8 +102,3 @@ Summary
 
 ---
 
-If you'd like, I can:
-- run a more detailed per-kernel Nsight Compute analysis and append the key bottlenecks
-- add graphs (SVG/PNG) for side-by-side throughput/latency comparison
-- save this file and create a short summary slide for presentations
-
