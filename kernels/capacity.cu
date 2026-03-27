@@ -3,8 +3,9 @@
 #include <mma.h>                //Enables Tensor Core instructions
 using namespace nvcuda;         // Brings wmma:: into scope
 #include <stdio.h>
+#include <assert.h>
 
-#define MOE_KERNEL baseline
+#define MOE_KERNEL capacity
 
 template<bool calculatePerExpert>
 static __device__ __forceinline__ void wmma_db(
@@ -15,6 +16,7 @@ static __device__ __forceinline__ void wmma_db(
     int M, int N, int K
 )
 {   
+    assert( (M % WMMA_M == 0) && (N % WMMA_N == 0) && (K % WMMA_K == 0) );
     int batch = blockIdx.z;
 
     const half* A_batch = A + batch * M * K;
@@ -140,12 +142,15 @@ static __device__ __forceinline__ void wmma_db(
 static __device__ __forceinline__ void fp32_to_fp16(
     const float* __restrict__ input,        // hidden_mlp_layer_1_out
     half* __restrict__ output,              // hidden_mlp_layer_1_out_fp16
-    int total_size                          // num_experts * ( N * (up_proj_dim * d_model) )
+    int total_size                          // num_experts * ( CAP * (up_proj_dim * d_model) )
 ){  
     const int batch = blockIdx.z;
 
-    const float* input_b = input + batch * num_experts * N * (up_proj_dim * d_model);
-    half* output_b = output + batch *  num_experts * N * (up_proj_dim * d_model);
+    int CAP_raw = (int)ceilf((float)N * (float)k / (float)num_experts * capacity_factor);
+    int CAP = ((CAP_raw + WMMA_M - 1) / WMMA_M) * WMMA_M;
+
+    const float* input_b = input + batch * num_experts * CAP * (up_proj_dim * d_model);
+    half* output_b = output + batch *  num_experts * CAP * (up_proj_dim * d_model);
 
     const int block_linear = blockIdx.y * gridDim.x + blockIdx.x;
     const int global_tid = block_linear * blockDim.x + threadIdx.x;
@@ -241,11 +246,14 @@ static __device__ __forceinline__ void build_per_expert_buffers(
 
     const int batch = blockIdx.z;
 
+    int CAP_raw = (int)ceilf((float)N * (float)k / (float)num_experts * capacity_factor);
+    int CAP = ((CAP_raw + WMMA_M - 1) / WMMA_M) * WMMA_M;
+
     const int* selected_expert_indices_b = selected_expert_indices + batch * N * k;
     const float* selected_expert_weights_b = selected_expert_weights + batch * N * k;
     int* expert_counts_b = expert_counts + batch * num_experts;
-    int* expert_token_ids_b = expert_token_ids + batch * num_experts * N;
-    float* expert_token_weights_b = expert_token_weights + batch * num_experts * N;
+    int* expert_token_ids_b = expert_token_ids + batch * num_experts * CAP;
+    float* expert_token_weights_b = expert_token_weights + batch * num_experts * CAP;
 
     const int tid = threadIdx.x;
     const int warp_id = tid / THREADS_PER_WARP;
@@ -263,8 +271,8 @@ static __device__ __forceinline__ void build_per_expert_buffers(
             if (expert_id >= 0 && expert_id < num_experts) {
                 const int slot = atomicAdd(&expert_counts_b[expert_id], 1);
 
-                if (slot < N) {
-                    const int out_idx = expert_id * N + slot;
+                if (slot < CAP) { // drop overflow policy 
+                    const int out_idx = expert_id * CAP + slot;
                     expert_token_ids_b[out_idx] = token_id;
                     expert_token_weights_b[out_idx] = selected_expert_weights_b[route_id];
                 }
@@ -285,25 +293,29 @@ static __device__ __forceinline__ void assign_per_expert_wmma_inputs(
 
     const half* input_b = input + batch * N * d_model;
     const int* expert_counts_b = expert_counts + batch * num_experts;
-    const int* expert_token_ids_b = expert_token_ids + batch * num_experts * N;
-    half* per_expert_wmma_inputs_b = per_expert_wmma_inputs + batch * num_experts * N * d_model;
+    int CAP_raw = (int)ceilf((float)N * (float)k / (float)num_experts * capacity_factor);
+    int CAP = ((CAP_raw + WMMA_M - 1) / WMMA_M) * WMMA_M;
+
+    const int* expert_token_ids_b = expert_token_ids + batch * num_experts * CAP;
+    half* per_expert_wmma_inputs_b = per_expert_wmma_inputs + batch * num_experts * CAP * d_model;
 
     const int tid = threadIdx.x;
     const int warp_id = tid / THREADS_PER_WARP;
     const int lane_id = tid % THREADS_PER_WARP;
 
+
     const int row_id = blockIdx.x * WARPS_PER_BLOCK + warp_id;
-    const int total_rows = num_experts * N;
+    const int total_rows = num_experts * CAP;
     if (row_id >= total_rows) return;
 
-    const int expert_id = row_id / N;
-    const int slot = row_id % N;
+    const int expert_id = row_id / CAP;
+    const int slot = row_id % CAP;
     const int row_base = row_id * d_model;
-    int elems_per_batch = num_experts * N * d_model;
-    int token_ids_per_batch = num_experts * N;
+    int elems_per_batch = num_experts * CAP * d_model;
+    int token_ids_per_batch = num_experts * CAP;
 
     if (slot < expert_counts_b[expert_id]) {
-        int token_idx = expert_id * N + slot;
+        int token_idx = expert_id * CAP + slot;
         if (token_idx < 0 || token_idx >= token_ids_per_batch) {
             return;
         }
@@ -339,35 +351,6 @@ static __device__ __forceinline__ void assign_per_expert_wmma_inputs(
 }
 
 
-// //pad for the per-expert mini-GEMMs ie [m_e, d_model] @ [d_model, 4 x d_model] so that wmma can be applied
-// static __device__ __forceinline__ void pad_rows_for_wmma(
-//     const float* __restrict__ input,
-//     float* __restrict__ output,
-//     int M, int N
-// ){  
-//     const int batch = blockIdx.z;
-
-//     const float* input_batch = input + batch * M * N;
-//     float* output_batch = output + batch * M * N;
-
-//     const int tid = threadIdx.x;
-//     const int warp_id = tid / 32; //one warp owns one row for consistency with other device kernels to be fused
-//     const int lane_id = tid % 32;
-
-//     const int token_id = blockIdx.x * WARPS_PER_BLOCK + warp_id;
-
-//     //closest row larger or equal than M and divisible by WMMA_M
-//     const int wmma_row = ((M + WMMA_M - 1) / WMMA_M) * WMMA_M;
-
-//     if(token_id >= wmma_row) return;
-
-//     if(token_id < M){
-//         for(int l = lane_id; l < N; l += THREADS_PER_WARP) output_batch[token_id * N + l] = input_batch[token_id * N + l];
-//     }else if(token_id < wmma_row){
-//         for(int l = lane_id; l < N; l += THREADS_PER_WARP) output_batch[token_id * N + l] = 0.0f;
-//     }
-// }
-
 static __device__ __forceinline__ void combine(
     const float* __restrict__ input,                         // hidden_mlp_layer_2_out [num_experts, N, d_model]
     const int* __restrict__ expert_token_ids,                // [num_experts, N]
@@ -377,7 +360,9 @@ static __device__ __forceinline__ void combine(
     float* final_output                        // [N, d_model]
 ){ 
     const int batch = blockIdx.z;
-    const int rows_per_expert = N;
+    int CAP_raw = (int)ceilf((float)N * (float)k / (float)num_experts * capacity_factor);
+    int CAP = ((CAP_raw + WMMA_M - 1) / WMMA_M) * WMMA_M;
+    const int rows_per_expert = CAP;
     const int elems_per_expert = rows_per_expert * d_model;
 
     const float* input_b = input + batch * num_experts * elems_per_expert;
@@ -436,7 +421,7 @@ static __device__ __forceinline__ void zero_final_output_and_expert_counts(
 
 
 
-__global__ void baseline(MoEArgs args){
+__global__ void capacity(MoEArgs args){
 
     // **** list of kernel arguments: start ****
     // (provided via struct MoEArgs from include/moe_args.h for reusability)
@@ -474,23 +459,23 @@ __global__ void baseline(MoEArgs args){
     __shared__ int max_indices[WARPS_PER_BLOCK * k];
 
     top_k_gating(expert_logits, selected_expert_indices, selected_expert_weights, max_vals, max_indices);
-
     __syncthreads(); // ensure selected_expert_indices/weights are globally visible before build_per_expert_buffers reads them
 
-    build_per_expert_buffers(selected_expert_indices, selected_expert_weights, expert_counts, expert_token_ids, expert_token_weights);
-    
+    build_per_expert_buffers(selected_expert_indices, selected_expert_weights, expert_counts, expert_token_ids, expert_token_weights); 
     __syncthreads(); // ensure expert_token_ids/weights and expert_counts are globally visible before assign reads them
 
     assign_per_expert_wmma_inputs(input, expert_counts, expert_token_ids, per_expert_wmma_inputs);
 
-    wmma_db<true>(1.0f, per_expert_wmma_inputs, expert_up_proj_weights, hidden_mlp_layer_1_out, num_experts * N, up_proj_dim * d_model, d_model);
+    // compute capacity and use it for per-expert buffer sizes
+    int CAP_kernel_raw = (int)ceilf((float)N * (float)k / (float)num_experts * capacity_factor);
+    int CAP_kernel = ((CAP_kernel_raw + WMMA_M - 1) / WMMA_M) * WMMA_M;
 
-    fp32_to_fp16(hidden_mlp_layer_1_out, hidden_mlp_layer_1_out_fp16, num_experts * N * up_proj_dim * d_model);
+    wmma_db<true>(1.0f, per_expert_wmma_inputs, expert_up_proj_weights, hidden_mlp_layer_1_out, num_experts * CAP_kernel, up_proj_dim * d_model, d_model);
 
+    fp32_to_fp16(hidden_mlp_layer_1_out, hidden_mlp_layer_1_out_fp16, num_experts * CAP_kernel * up_proj_dim * d_model);
     __syncthreads(); // ensure fp32->fp16 conversion is complete before second GEMM
 
-    wmma_db<true>(1.0f, hidden_mlp_layer_1_out_fp16, expert_down_proj_weights, hidden_mlp_layer_2_out, num_experts * N, d_model, up_proj_dim * d_model);
-
+    wmma_db<true>(1.0f, hidden_mlp_layer_1_out_fp16, expert_down_proj_weights, hidden_mlp_layer_2_out, num_experts * CAP_kernel, d_model, up_proj_dim * d_model);
     __syncthreads(); // ensure hidden_mlp_layer_2_out is fully written before combine reads it
 
     combine(hidden_mlp_layer_2_out, expert_token_ids, expert_token_weights, expert_counts, final_output);

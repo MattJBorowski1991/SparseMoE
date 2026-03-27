@@ -17,7 +17,8 @@ MoEArgs allocate_and_copy_to_device(
     const std::vector<half>& h_input,
     const std::vector<float>& h_final_output,
     const std::vector<half>& h_expert_up_proj_weights,
-    const std::vector<half>& h_expert_down_proj_weights
+    const std::vector<half>& h_expert_down_proj_weights,
+    bool use_capacity
 );
 
 // Free all device memory allocated in MoEArgs

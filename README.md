@@ -2,7 +2,7 @@
 
 Input to a sparse MoE block is a matrix of token attention-based embeddings.
 
-## Baseline
+## Base architecture
 
 ### 1. Input
 
@@ -32,6 +32,11 @@ m_e = number of routed tokens to this expert e. `[m_e, d_model]` is obtained by 
 
 Multiply each expert output by its gating weight, sum the `k` contributions per token to produce `[N, d_model]`, and restore the original token order.
 
+## Kernels
+
+### Unfused
+
+All global kernels launched seperately in sequence
 
 ## Optimized
 

@@ -4,17 +4,7 @@
 #include "../utils/check_cuda.h"
 #include <stdio.h>
 
-// Each kernel file must define its kernel e.g.: #define MOE_KERNEL baseline.cu
-
-// --- Tiling and launch constants ---
-#define WMMA_M 16
-#define WMMA_K 16
-#define WMMA_N 16
-#define PAD 0
-
-#define WARP_TILES_X 4
-#define WARP_TILES_Y 2
-#define WARPS_PER_BLOCK (WARP_TILES_X * WARP_TILES_Y)
+// Each kernel file other than unfused must define its kernel e.g.: #define MOE_KERNEL baseline.cu
 
 #ifndef MOE_LAUNCH
 #define MOE_LAUNCH(args)    \

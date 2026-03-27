@@ -24,7 +24,8 @@ MoEArgs allocate_and_copy_to_device(
     const std::vector<half>& h_input,
     const std::vector<float>& h_final_output,
     const std::vector<half>& h_expert_up_proj_weights,
-    const std::vector<half>& h_expert_down_proj_weights
+    const std::vector<half>& h_expert_down_proj_weights,
+    bool use_capacity
 ) {
     MoEArgs args;
     args.num_batches = num_batches;
@@ -75,6 +76,13 @@ MoEArgs allocate_and_copy_to_device(
         CHECK_CUDA(cudaMemcpy((void*)args.expert_down_proj_weights, h_expert_down_proj_weights.data(), size, cudaMemcpyHostToDevice));
     }
 
+    // Determine per-expert capacity if requested
+    int CAP = N;
+    if (use_capacity) {
+        int CAP_raw = (int)ceilf((float)N * (float)k / (float)num_experts * capacity_factor);
+        CAP = ((CAP_raw + WMMA_M - 1) / WMMA_M) * WMMA_M; // pad up to the next wmma size so we can use tensor cores
+    }
+
     // Allocate intermediate buffers (device-only, will be initialized by kernel)
     {
         // expert_logits: [num_batches, N, num_experts]
@@ -105,43 +113,43 @@ MoEArgs allocate_and_copy_to_device(
     }
 
     {
-        // expert_token_ids: [num_batches, num_experts, N]
-        size_t size = (size_t)num_batches * num_experts * N * sizeof(int);
+        // expert_token_ids: [num_batches, num_experts, CAP]
+        size_t size = (size_t)num_batches * num_experts * CAP * sizeof(int);
         
         CHECK_CUDA(cudaMalloc(&args.expert_token_ids, size));
     }
 
     {
-        // expert_token_weights: [num_batches, num_experts, N]
-        size_t size = (size_t)num_batches * num_experts * N * sizeof(float);
+        // expert_token_weights: [num_batches, num_experts, CAP]
+        size_t size = (size_t)num_batches * num_experts * CAP * sizeof(float);
         
         CHECK_CUDA(cudaMalloc(&args.expert_token_weights, size));
     }
 
     {
-        // per_expert_wmma_inputs: [num_batches, num_experts, N, d_model]
-        size_t size = (size_t)num_batches * num_experts * N * d_model * sizeof(half);
+        // per_expert_wmma_inputs: [num_batches, num_experts, CAP, d_model]
+        size_t size = (size_t)num_batches * num_experts * CAP * d_model * sizeof(half);
         
         CHECK_CUDA(cudaMalloc(&args.per_expert_wmma_inputs, size));
     }
 
     {
-        // hidden_mlp_layer_1_out: [num_batches, num_experts, N, 4 * d_model]
-        size_t size = (size_t)num_batches * num_experts * N * (up_proj_dim * d_model) * sizeof(float);
+        // hidden_mlp_layer_1_out: [num_batches, num_experts, CAP, 4 * d_model]
+        size_t size = (size_t)num_batches * num_experts * CAP * (up_proj_dim * d_model) * sizeof(float);
         
         CHECK_CUDA(cudaMalloc(&args.hidden_mlp_layer_1_out, size));
     }
 
     {
-        // hidden_mlp_layer_1_out_fp16: [num_batches, num_experts, N, 4 * d_model]
-        size_t size = (size_t)num_batches * num_experts * N * (up_proj_dim * d_model) * sizeof(half);
+        // hidden_mlp_layer_1_out_fp16: [num_batches, num_experts, CAP, 4 * d_model]
+        size_t size = (size_t)num_batches * num_experts * CAP * (up_proj_dim * d_model) * sizeof(half);
         
         CHECK_CUDA(cudaMalloc(&args.hidden_mlp_layer_1_out_fp16, size));
     }
 
     {
-        // hidden_mlp_layer_2_out: [num_batches, num_experts, N, d_model]
-        size_t size = (size_t)num_batches * num_experts * N * d_model * sizeof(float);
+        // hidden_mlp_layer_2_out: [num_batches, num_experts, CAP, d_model]
+        size_t size = (size_t)num_batches * num_experts * CAP * d_model * sizeof(float);
         
         CHECK_CUDA(cudaMalloc(&args.hidden_mlp_layer_2_out, size));
     }

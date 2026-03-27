@@ -78,7 +78,9 @@ int main(int argc, char** argv){
     initialize_host_data(h_input, h_final_output, h_expert_up_proj_weights, h_expert_down_proj_weights);
 
     printf("Allocating and copying data to device ... \n");
-    MoEArgs args = allocate_and_copy_to_device(h_input, h_final_output, h_expert_up_proj_weights, h_expert_down_proj_weights);
+    // enable capacity-aware allocations
+    bool use_capacity = true;
+    MoEArgs args = allocate_and_copy_to_device(h_input, h_final_output, h_expert_up_proj_weights, h_expert_down_proj_weights, use_capacity);
 
 
 
