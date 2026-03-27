@@ -21,3 +21,45 @@ Best swizzle: minimal swizzle (or only swizzle one tensor), e.g. swizzle only B,
 Why best: captures most conflict reduction while avoiding extra instructions/register/shared overhead that can hurt occupancy.
 
 Best method for our app in v2: try a small set (no swizzle, XOR with row&1/3/7, maybe only on B), then keep the one with lowest L1 Wavefronts Shared Excessive and best cudaEvent time.
+
+
+## First swizzling attempt in `capacity_v2`
+
+The first concrete swizzling experiment in `capacity_v2` was a shared-memory XOR swizzle applied around the `cp.async` staging path inside the tensor-core GEMM loop.
+
+### What was changed
+
+- `cp.async` no longer wrote tiles into a plain linear shared-memory layout.
+- Instead, the destination column index was permuted with an XOR-based mapping.
+- Because `cp.async` writes 16-byte chunks, the final version of this experiment swizzled at 16-byte chunk granularity rather than per-element granularity.
+- Before `wmma::load_matrix_sync`, the staged tile was unswizzled back into the linear layout expected by the WMMA API.
+
+### Why it seemed promising
+
+The goal was to reduce shared-memory bank conflicts and replay pressure reported by Nsight Compute near the shared-memory load path. In principle, distributing accesses more evenly across banks can reduce `L1 Wavefronts Shared Excessive` and improve the operand feed into tensor-core instructions.
+
+### Why it was supposed to help
+
+The expected mechanism was:
+
+1. `cp.async` writes land in a bank-friendlier permuted shared-memory layout.
+2. Shared-memory bank conflicts decrease during staging-related access.
+3. Tensor-core operand loading becomes cleaner, reducing replay overhead.
+
+### What actually happened
+
+Although the swizzle reduced some profiler-visible conflict symptoms, it required extra work:
+
+- additional index arithmetic,
+- extra shared-memory traffic for the unswizzle step,
+- more instructions in the critical loop,
+- and in some cases more register pressure.
+
+In practice, the real `cudaEventRecord` runtime got worse even when some Nsight Compute metrics looked better.
+
+### Takeaway
+
+This first swizzling attempt was a valid experiment, but in this kernel the overhead of swizzle + unswizzle outweighed the benefit. That result motivated the later `ldmatrix + mma.sync` experiment, which tried to avoid the explicit unswizzle step entirely.
+
+
+
