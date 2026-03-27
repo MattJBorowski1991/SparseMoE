@@ -1,6 +1,6 @@
 NVCC ?= nvcc
 
-NVCC_FLAGS = -O3 -lineinfo -Xcompiler -Wall
+NVCC_FLAGS = -O3 -lineinfo -Xcompiler -Wall --use_fast_math
 
 .DEFAULT_GOAL := all
 

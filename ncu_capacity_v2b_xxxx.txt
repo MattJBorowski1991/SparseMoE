@@ -1,0 +1,81 @@
+==PROF== Connected to process 34597 (/teamspace/studios/this_studio/SparseMoE/bin/profile_capacity_v2)
+==PROF== Profiling "capacity_v2(MoEArgs)" - 0: 0%
+==WARNING== Backing up device memory in system memory. Kernel replay might be slow. Consider using "--replay-mode application" to avoid memory save-and-restore.
+....50%....100% - 1 pass
+
+==ERROR== LaunchFailed
+==PROF== Trying to shutdown target application
+==ERROR== The application returned an error code (9).
+[34597] profile_capacity_v2@127.0.0.1
+  capacity_v2(MoEArgs) (0, 0, 0)x(0, 0, 0), Context 1, Stream 7, Device 0, CC 8.9
+    Section: GPU Speed Of Light Throughput
+    ----------------------- ----------- ------------
+    Metric Name             Metric Unit Metric Value
+    ----------------------- ----------- ------------
+    DRAM Frequency                   hz      (!) nan
+    SM Frequency                     hz      (!) nan
+    Elapsed Cycles                cycle      (!) nan
+    Memory Throughput                 %      (!) nan
+    DRAM Throughput                   %      (!) nan
+    Duration                         ns      (!) nan
+    L1/TEX Cache Throughput           %      (!) nan
+    L2 Cache Throughput               %      (!) nan
+    SM Active Cycles              cycle      (!) nan
+    Compute (SM) Throughput           %      (!) nan
+    ----------------------- ----------- ------------
+
+    INF   This workload is utilizing greater than 80.0% of the available compute or memory performance of the device.   
+          To further improve performance, work will likely need to be shifted from the most utilized to another unit.   
+          Start by analyzing workloads in the Memory Workload Analysis section.                                         
+
+    Section: Launch Statistics
+    -------------------------------- ----------- ------------
+    Metric Name                      Metric Unit Metric Value
+    -------------------------------- ----------- ------------
+    Block Size                                        (!) n/a
+    Function Cache Configuration                      (!) n/a
+    Grid Size                                         (!) n/a
+    Registers Per Thread                              (!) n/a
+    Shared Memory Configuration Size                  (!) n/a
+    Driver Shared Memory Per Block                    (!) n/a
+    Dynamic Shared Memory Per Block                   (!) n/a
+    Static Shared Memory Per Block                    (!) n/a
+    # SMs                                             (!) n/a
+    Stack Size                                        (!) n/a
+    Threads                                           (!) n/a
+    # TPCs                                            (!) n/a
+    Enabled TPC IDs                                   (!) n/a
+    Uses Green Context                                (!) n/a
+    Waves Per SM                                      (!) n/a
+    -------------------------------- ----------- ------------
+
+    Section: Occupancy
+    ------------------------------- ----------- ------------
+    Metric Name                     Metric Unit Metric Value
+    ------------------------------- ----------- ------------
+    Block Limit SM                                   (!) n/a
+    Block Limit Registers                            (!) n/a
+    Block Limit Shared Mem                           (!) n/a
+    Block Limit Warps                                (!) n/a
+    Theoretical Active Warps per SM                  (!) n/a
+    Theoretical Occupancy                            (!) n/a
+    Achieved Occupancy                        %      (!) nan
+    Achieved Active Warps Per SM           warp      (!) nan
+    ------------------------------- ----------- ------------
+
+    Section: GPU and Memory Workload Distribution
+    -------------------------- ----------- ------------
+    Metric Name                Metric Unit Metric Value
+    -------------------------- ----------- ------------
+    Average DRAM Active Cycles       cycle      (!) nan
+    Total DRAM Elapsed Cycles        cycle      (!) nan
+    Average L1 Active Cycles         cycle      (!) nan
+    Total L1 Elapsed Cycles          cycle      (!) nan
+    Average L2 Active Cycles         cycle      (!) nan
+    Total L2 Elapsed Cycles          cycle      (!) nan
+    Average SM Active Cycles         cycle      (!) nan
+    Total SM Elapsed Cycles          cycle      (!) nan
+    Average SMSP Active Cycles       cycle      (!) nan
+    Total SMSP Elapsed Cycles        cycle      (!) nan
+    -------------------------- ----------- ------------
+

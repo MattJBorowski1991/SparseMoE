@@ -61,8 +61,13 @@ Run the provided experiments (see `Makefile`) and collect Nsight Compute (`ncu`)
 Quick start (Linux, CUDA enabled):
 
 ```bash
-make clean && make -j
+make clean && make KERNEL=baseline
 # then run the produced binary in bin/ (project-specific runner)
+```
+
+Full NCU profile:
+```bash
+ncu --import-source yes --set full --export prof/ncu/capacity.ncu-rep ./bin/profile_capacity --kernel=capacity --warmup=5 --runs=10
 ```
 
 If your GPU memory is limited, try the `capacity` variant which reduces per-expert allocations.
