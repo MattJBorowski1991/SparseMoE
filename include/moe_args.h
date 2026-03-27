@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cuda_runtime.h>
+#include <cuda_fp16.h>
 
 struct MoEArgs {
     const half* input;                              // [N, d_model]

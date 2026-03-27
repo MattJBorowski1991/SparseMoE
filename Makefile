@@ -2,8 +2,10 @@ NVCC ?= nvcc
 
 NVCC_FLAGS = -O3 -lineinfo -Xcompiler -Wall
 
+.DEFAULT_GOAL := all
+
 MAXRREGCOUNT ?= 
-ifeq($MAXRREGCOUNT,)
+ifeq ($(MAXRREGCOUNT),)
 	NVCC_REGCOUNT = 
 else
 	NVCC_REGCOUNT = -maxrregcount=$(MAXRREGCOUNT)

@@ -1,4 +1,5 @@
 #include <cstring>
+#include <cstdio>
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
 
@@ -28,9 +29,24 @@ MoEArgs allocate_and_copy_to_device(
     MoEArgs args;
     args.num_batches = num_batches;
 
+    // auto print_mem_info = [&](const char* name, size_t req){
+    //     size_t free_bytes = 0, total_bytes = 0;
+    //     cudaError_t e = cudaMemGetInfo(&free_bytes, &total_bytes);
+    //     if (e == cudaSuccess) {
+    //         printf("[MEM] %s: requesting %zu bytes (%.2f MiB), free=%zu bytes (%.2f MiB), total=%zu bytes (%.2f MiB)\n",
+    //                name, req, req / 1024.0 / 1024.0, free_bytes, free_bytes / 1024.0 / 1024.0, total_bytes, total_bytes / 1024.0 / 1024.0);
+    //     } else {
+    //         printf("[MEM] %s: requesting %zu bytes (cudaMemGetInfo failed: %d)\n", name, req, (int)e);
+    //     }
+    // };
+
+
+    
+
     // Allocate and copy host input data to device
     {
-        size_t size = N * d_model * sizeof(half);
+        size_t size = (size_t)num_batches * N * d_model * sizeof(half);
+        
         CHECK_CUDA(cudaMalloc(&args.input, size));
         CHECK_CUDA(cudaMemcpy((void*)args.input, h_input.data(), size, cudaMemcpyHostToDevice));
     }
@@ -38,88 +54,102 @@ MoEArgs allocate_and_copy_to_device(
     // Allocate router_weights (initialized to zero on device)
     {
         size_t size = d_model * num_experts * sizeof(half);
+        
         CHECK_CUDA(cudaMalloc(&args.router_weights, size));
         CHECK_CUDA(cudaMemset((void*)args.router_weights, 0, size));
     }
 
     // Allocate and copy expert_up_proj_weights
     {
-        size_t size = num_experts * d_model * (up_proj_dim * d_model) * sizeof(half);
+        size_t size = (size_t)num_experts * d_model * (up_proj_dim * d_model) * sizeof(half);
+        
         CHECK_CUDA(cudaMalloc(&args.expert_up_proj_weights, size));
         CHECK_CUDA(cudaMemcpy((void*)args.expert_up_proj_weights, h_expert_up_proj_weights.data(), size, cudaMemcpyHostToDevice));
     }
 
     // Allocate and copy expert_down_proj_weights
     {
-        size_t size = num_experts * (up_proj_dim * d_model) * d_model * sizeof(half);
+        size_t size = (size_t)num_experts * (up_proj_dim * d_model) * d_model * sizeof(half);
+        
         CHECK_CUDA(cudaMalloc(&args.expert_down_proj_weights, size));
         CHECK_CUDA(cudaMemcpy((void*)args.expert_down_proj_weights, h_expert_down_proj_weights.data(), size, cudaMemcpyHostToDevice));
     }
 
     // Allocate intermediate buffers (device-only, will be initialized by kernel)
     {
-        // expert_logits: [N, num_experts]
-        size_t size = N * num_experts * sizeof(float);
+        // expert_logits: [num_batches, N, num_experts]
+        size_t size = (size_t)num_batches * N * num_experts * sizeof(float);
+        
         CHECK_CUDA(cudaMalloc(&args.expert_logits, size));
     }
 
     {
-        // selected_expert_indices: [N, k]
-        size_t size = N * k * sizeof(int);
+        // selected_expert_indices: [num_batches, N, k]
+        size_t size = (size_t)num_batches * N * k * sizeof(int);
+        
         CHECK_CUDA(cudaMalloc(&args.selected_expert_indices, size));
     }
 
     {
-        // selected_expert_weights: [N, k]
-        size_t size = N * k * sizeof(float);
+        // selected_expert_weights: [num_batches, N, k]
+        size_t size = (size_t)num_batches * N * k * sizeof(float);
+        
         CHECK_CUDA(cudaMalloc(&args.selected_expert_weights, size));
     }
 
     {
-        // expert_counts: [num_experts]
-        size_t size = num_experts * sizeof(int);
+        // expert_counts: [num_batches, num_experts]
+        size_t size = (size_t)num_batches * num_experts * sizeof(int);
+        
         CHECK_CUDA(cudaMalloc(&args.expert_counts, size));
     }
 
     {
-        // expert_token_ids: [num_experts, N]
-        size_t size = num_experts * N * sizeof(int);
+        // expert_token_ids: [num_batches, num_experts, N]
+        size_t size = (size_t)num_batches * num_experts * N * sizeof(int);
+        
         CHECK_CUDA(cudaMalloc(&args.expert_token_ids, size));
     }
 
     {
-        // expert_token_weights: [num_experts, N]
-        size_t size = num_experts * N * sizeof(float);
+        // expert_token_weights: [num_batches, num_experts, N]
+        size_t size = (size_t)num_batches * num_experts * N * sizeof(float);
+        
         CHECK_CUDA(cudaMalloc(&args.expert_token_weights, size));
     }
 
     {
-        // per_expert_wmma_inputs: [num_experts, N, d_model]
-        size_t size = num_experts * N * d_model * sizeof(half);
+        // per_expert_wmma_inputs: [num_batches, num_experts, N, d_model]
+        size_t size = (size_t)num_batches * num_experts * N * d_model * sizeof(half);
+        
         CHECK_CUDA(cudaMalloc(&args.per_expert_wmma_inputs, size));
     }
 
     {
-        // hidden_mlp_layer_1_out: [num_experts, N, 4 * d_model]
-        size_t size = num_experts * N * (up_proj_dim * d_model) * sizeof(float);
+        // hidden_mlp_layer_1_out: [num_batches, num_experts, N, 4 * d_model]
+        size_t size = (size_t)num_batches * num_experts * N * (up_proj_dim * d_model) * sizeof(float);
+        
         CHECK_CUDA(cudaMalloc(&args.hidden_mlp_layer_1_out, size));
     }
 
     {
-        // hidden_mlp_layer_1_out_fp16: [num_experts, N, 4 * d_model]
-        size_t size = num_experts * N * (up_proj_dim * d_model) * sizeof(half);
+        // hidden_mlp_layer_1_out_fp16: [num_batches, num_experts, N, 4 * d_model]
+        size_t size = (size_t)num_batches * num_experts * N * (up_proj_dim * d_model) * sizeof(half);
+        
         CHECK_CUDA(cudaMalloc(&args.hidden_mlp_layer_1_out_fp16, size));
     }
 
     {
-        // hidden_mlp_layer_2_out: [num_experts, N, d_model]
-        size_t size = num_experts * N * d_model * sizeof(float);
+        // hidden_mlp_layer_2_out: [num_batches, num_experts, N, d_model]
+        size_t size = (size_t)num_batches * num_experts * N * d_model * sizeof(float);
+        
         CHECK_CUDA(cudaMalloc(&args.hidden_mlp_layer_2_out, size));
     }
 
     {
-        // final_output: [N, d_model]
-        size_t size = N * d_model * sizeof(float);
+        // final_output: [num_batches, N, d_model]
+        size_t size = (size_t)num_batches * N * d_model * sizeof(float);
+        
         CHECK_CUDA(cudaMalloc(&args.final_output, size));
     }
 

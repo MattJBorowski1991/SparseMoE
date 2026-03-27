@@ -2,7 +2,7 @@
 #include "include/moe_args.h"
 #include <mma.h>                //Enables Tensor Core instructions
 using namespace nvcuda;         // Brings wmma:: into scope
-
+#include <stdio.h>
 #define MOE_KERNEL baseline
 
 // --- Tiling and launch constants ---
@@ -156,8 +156,9 @@ static __device__ __forceinline__ void fp32_to_fp16(
     const float* input_b = input + batch * num_experts * N * (up_proj_dim * d_model);
     half* output_b = output + batch *  num_experts * N * (up_proj_dim * d_model);
 
-    const int global_tid = blockIdx.x * blockDim.x + threadIdx.x;
-    const int global_stride = gridDim.x * blockDim.x;
+    const int block_linear = blockIdx.y * gridDim.x + blockIdx.x;
+    const int global_tid = block_linear * blockDim.x + threadIdx.x;
+    const int global_stride = gridDim.x * gridDim.y * blockDim.x;
 
     for (int idx = global_tid; idx < total_size; idx += global_stride) {
         output_b[idx] = __float2half(input_b[idx]);
@@ -307,55 +308,74 @@ static __device__ __forceinline__ void assign_per_expert_wmma_inputs(
     const int expert_id = row_id / N;
     const int slot = row_id % N;
     const int row_base = row_id * d_model;
+    int elems_per_batch = num_experts * N * d_model;
+    int token_ids_per_batch = num_experts * N;
 
     if (slot < expert_counts_b[expert_id]) {
-        const int token_id = expert_token_ids_b[expert_id * N + slot];
+        int token_idx = expert_id * N + slot;
+        if (token_idx < 0 || token_idx >= token_ids_per_batch) {
+            return;
+        }
+
+        const int token_id = expert_token_ids_b[token_idx];
         if (token_id >= 0 && token_id < N) {
             const int in_base = token_id * d_model;
             for (int col = lane_id; col < d_model; col += THREADS_PER_WARP) {
-                per_expert_wmma_inputs_b[row_base + col] = input_b[in_base + col];
+                int dst_idx = row_base + col;
+                if (dst_idx < 0 || dst_idx >= elems_per_batch) {
+                    return;
+                }
+                per_expert_wmma_inputs_b[dst_idx] = input_b[in_base + col];
             }
         } else {
             for (int col = lane_id; col < d_model; col += THREADS_PER_WARP) {
-                per_expert_wmma_inputs_b[row_base + col] = __float2half(0.0f);
+                int dst_idx = row_base + col;
+                if (dst_idx < 0 || dst_idx >= elems_per_batch) {
+                    return;
+                }
+                per_expert_wmma_inputs_b[dst_idx] = __float2half(0.0f);
             }
         }
     } else {
         for (int col = lane_id; col < d_model; col += THREADS_PER_WARP) {
-            per_expert_wmma_inputs_b[row_base + col] = __float2half(0.0f);
+            int dst_idx = row_base + col;
+            if (dst_idx < 0 || dst_idx >= elems_per_batch) {
+                return;
+            }
+            per_expert_wmma_inputs_b[dst_idx] = __float2half(0.0f);
         }
     }
 }
 
 
-//pad for the per-expert mini-GEMMs ie [m_e, d_model] @ [d_model, 4 x d_model] so that wmma can be applied
-static __device__ __forceinline__ void pad_rows_for_wmma(
-    const float* __restrict__ input,
-    float* __restrict__ output,
-    int M, int N
-){  
-    const int batch = blockIdx.z;
+// //pad for the per-expert mini-GEMMs ie [m_e, d_model] @ [d_model, 4 x d_model] so that wmma can be applied
+// static __device__ __forceinline__ void pad_rows_for_wmma(
+//     const float* __restrict__ input,
+//     float* __restrict__ output,
+//     int M, int N
+// ){  
+//     const int batch = blockIdx.z;
 
-    const float* input_batch = input + batch * M * N;
-    float* output_batch = output + batch * M * N;
+//     const float* input_batch = input + batch * M * N;
+//     float* output_batch = output + batch * M * N;
 
-    const int tid = threadIdx.x;
-    const int warp_id = tid / 32; //one warp owns one row for consistency with other device kernels to be fused
-    const int lane_id = tid % 32;
+//     const int tid = threadIdx.x;
+//     const int warp_id = tid / 32; //one warp owns one row for consistency with other device kernels to be fused
+//     const int lane_id = tid % 32;
 
-    const int token_id = blockIdx.x * WARPS_PER_BLOCK + warp_id;
+//     const int token_id = blockIdx.x * WARPS_PER_BLOCK + warp_id;
 
-    //closest row larger or equal than M and divisible by WMMA_M
-    const int wmma_row = ((M + WMMA_M - 1) / WMMA_M) * WMMA_M;
+//     //closest row larger or equal than M and divisible by WMMA_M
+//     const int wmma_row = ((M + WMMA_M - 1) / WMMA_M) * WMMA_M;
 
-    if(token_id >= wmma_row) return;
+//     if(token_id >= wmma_row) return;
 
-    if(token_id < M){
-        for(int l = lane_id; l < N; l += THREADS_PER_WARP) output_batch[token_id * N + l] = input_batch[token_id * N + l];
-    }else if(token_id < wmma_row){
-        for(int l = lane_id; l < N; l += THREADS_PER_WARP) output_batch[token_id * N + l] = 0.0f;
-    }
-}
+//     if(token_id < M){
+//         for(int l = lane_id; l < N; l += THREADS_PER_WARP) output_batch[token_id * N + l] = input_batch[token_id * N + l];
+//     }else if(token_id < wmma_row){
+//         for(int l = lane_id; l < N; l += THREADS_PER_WARP) output_batch[token_id * N + l] = 0.0f;
+//     }
+// }
 
 static __device__ __forceinline__ void combine(
     const float* __restrict__ input,                         // hidden_mlp_layer_2_out [num_experts, N, d_model]
@@ -464,15 +484,23 @@ __global__ void baseline(MoEArgs args){
 
     top_k_gating(expert_logits, selected_expert_indices, selected_expert_weights, max_vals, max_indices);
 
+    __syncthreads(); // ensure selected_expert_indices/weights are globally visible before build_per_expert_buffers reads them
+
     build_per_expert_buffers(selected_expert_indices, selected_expert_weights, expert_counts, expert_token_ids, expert_token_weights);
     
+    __syncthreads(); // ensure expert_token_ids/weights and expert_counts are globally visible before assign reads them
+
     assign_per_expert_wmma_inputs(input, expert_counts, expert_token_ids, per_expert_wmma_inputs);
 
     wmma_db<true>(1.0f, per_expert_wmma_inputs, expert_up_proj_weights, hidden_mlp_layer_1_out, num_experts * N, up_proj_dim * d_model, d_model);
 
     fp32_to_fp16(hidden_mlp_layer_1_out, hidden_mlp_layer_1_out_fp16, num_experts * N * up_proj_dim * d_model);
 
+    __syncthreads(); // ensure fp32->fp16 conversion is complete before second GEMM
+
     wmma_db<true>(1.0f, hidden_mlp_layer_1_out_fp16, expert_down_proj_weights, hidden_mlp_layer_2_out, num_experts * N, d_model, up_proj_dim * d_model);
+
+    __syncthreads(); // ensure hidden_mlp_layer_2_out is fully written before combine reads it
 
     combine(hidden_mlp_layer_2_out, expert_token_ids, expert_token_weights, expert_counts, final_output);
 

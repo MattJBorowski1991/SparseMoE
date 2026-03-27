@@ -69,10 +69,10 @@ int main(int argc, char** argv){
     }
 
     // Allocate and initialize host data (only true inputs and weights)
-    std::vector<half> h_input(N * d_model);
+    std::vector<half> h_input((size_t)num_batches * N * d_model);
     std::vector<float> h_final_output(N * d_model);
-    std::vector<half> h_expert_up_proj_weights(num_experts * d_model * up_proj_dim * d_model);
-    std::vector<half> h_expert_down_proj_weights(num_experts * up_proj_dim * d_model * d_model);
+    std::vector<half> h_expert_up_proj_weights((size_t)num_experts * d_model * up_proj_dim * d_model);
+    std::vector<half> h_expert_down_proj_weights((size_t)num_experts * up_proj_dim * d_model * d_model);
 
     ensure_cache_dir_exists();
     initialize_host_data(h_input, h_final_output, h_expert_up_proj_weights, h_expert_down_proj_weights);
@@ -94,7 +94,7 @@ int main(int argc, char** argv){
 
     cleanup_device_data(args);
 
-    printf("Profilin complete \n");
+    printf("Profiling is complete.\n");
 
     return 0;
 }
