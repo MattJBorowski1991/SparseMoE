@@ -163,7 +163,7 @@ static __device__ __forceinline__ void fp32_to_fp16(
 
 
 static __device__ __forceinline__ void top_k_gating(
-    const float* logits,        // [num_tokens, num_experts] = [num_batches * N, num_experts]
+    const float* logits,                // [num_tokens, num_experts] = [num_batches * N, num_experts]
     int* selected_expert_indices,        // [num_tokens, k]
     float* selected_expert_weights,      // [num_tokens, k]
     float* max_vals,                    // allocate in SRAM & initiate

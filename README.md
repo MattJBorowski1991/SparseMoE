@@ -38,11 +38,12 @@ Multiply each expert output by its gating weight, sum the `k` contributions per 
 
 All global kernels launched seperately in sequence
 
-## Optimized
+### Baseline
 
-The optimized path expands baseline Steps 4-5 into the following routing and compute pipeline:
+All kernels from Unfused fused into one global kernel
 
-### 4. Capacity & slot assignment
+## Capacity
+
 
 Compute per-expert capacity and assign slots up to that capacity; apply an overflow policy for excess assignments.
 
@@ -52,11 +53,13 @@ Capacity (per expert) can be computed as:
 CAP = ceil(N * k / num_experts * capacity_factor)
 ```
 
+and then roundup to the nearest wmma tile size.
+
 The goal is to pack each expert's routed token vectors into fixed-size, contiguous per-expert tensors so we can execute larger, more efficient GEMMs (per-expert or grouped across experts) instead of many small GEMMs.
 
 Overflow policy: drop.
 
-### 5. Dispatch (local, no AllToAll)
+### 5. Dispatch
 
 Scatter/sort tokens into expert-contiguous buffers of shape `[num_experts, capacity, d_model]`.
 For example (k=2, 5 tokens):
@@ -71,7 +74,12 @@ Each expert runs its MLP on its buffer. Not all slots may be occupied, so the nu
 
 For `m` tokens: `[m, d_model] -> up-proj -> [m, d_ff] -> activation -> down-proj -> [m, d_model]`.
 
-### 6b. Grouped GEMM (alternative)
+## Next steps
+
+### Profile for both Prefill (large N) and Decode (N = 1)
+
+
+### Grouped GEMM (alternative)
 
 Concatenate expert buffers (pad empty slots to `capacity`) and perform grouped GEMM. Mask out padded outputs afterward.
 

@@ -1,12 +1,12 @@
-==PROF== Connected to process 41733 (/teamspace/studios/this_studio/SparseMoE/bin/profile_capacity)
+==PROF== Connected to process 42759 (/teamspace/studios/this_studio/SparseMoE/bin/profile_capacity)
 ==PROF== Profiling "capacity(MoEArgs)" - 0: 0%....50%....100% - 8 passes
 Allocating and copying data to device ... 
 Running 0 warmup runs... 
 Running 1 profiling runs... 
-Total duration via cudaEventRecord: 1308.941 ms
+Total duration via cudaEventRecord: 1308.362 ms
 Profiling is complete.
-==PROF== Disconnected from process 41733
-[41733] profile_capacity@127.0.0.1
+==PROF== Disconnected from process 42759
+[42759] profile_capacity@127.0.0.1
   capacity(MoEArgs) (64, 16, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
     Section: GPU Speed Of Light Throughput
     ----------------------- ----------- ------------
@@ -14,14 +14,14 @@ Profiling is complete.
     ----------------------- ----------- ------------
     DRAM Frequency                  Ghz         6.24
     SM Frequency                    Mhz       795.00
-    Elapsed Cycles                cycle     48510243
-    Memory Throughput                 %        84.95
-    DRAM Throughput                   %        79.01
-    Duration                         ms        61.02
-    L1/TEX Cache Throughput           %        85.74
-    L2 Cache Throughput               %        33.63
-    SM Active Cycles              cycle     48028460
-    Compute (SM) Throughput           %        34.61
+    Elapsed Cycles                cycle     48492117
+    Memory Throughput                 %        84.91
+    DRAM Throughput                   %        78.78
+    Duration                         ms        61.00
+    L1/TEX Cache Throughput           %        85.81
+    L2 Cache Throughput               %        33.27
+    SM Active Cycles              cycle  47972319.97
+    Compute (SM) Throughput           %        34.58
     ----------------------- ----------- ------------
 
     INF   This workload is utilizing greater than 80.0% of the available compute or memory performance of the device.   
@@ -59,8 +59,8 @@ Profiling is complete.
     Block Limit Warps                     block            6
     Theoretical Active Warps per SM        warp           24
     Theoretical Occupancy                     %           50
-    Achieved Occupancy                        %        49.43
-    Achieved Active Warps Per SM           warp        23.73
+    Achieved Occupancy                        %        49.69
+    Achieved Active Warps Per SM           warp        23.85
     ------------------------------- ----------- ------------
 
     OPT   Est. Local Speedup: 50%                                                                                       
@@ -72,15 +72,15 @@ Profiling is complete.
     -------------------------- ----------- ------------
     Metric Name                Metric Unit Metric Value
     -------------------------- ----------- ------------
-    Average DRAM Active Cycles       cycle    301084392
-    Total DRAM Elapsed Cycles        cycle   2286297088
-    Average L1 Active Cycles         cycle     48028460
-    Total L1 Elapsed Cycles          cycle   2811753288
-    Average L2 Active Cycles         cycle  50090770.46
-    Total L2 Elapsed Cycles          cycle   1208197200
-    Average SM Active Cycles         cycle     48028460
-    Total SM Elapsed Cycles          cycle   2811753288
-    Average SMSP Active Cycles       cycle  48026037.66
-    Total SMSP Elapsed Cycles        cycle  11247013152
+    Average DRAM Active Cycles       cycle    300068704
+    Total DRAM Elapsed Cycles        cycle   2285443072
+    Average L1 Active Cycles         cycle  47972319.97
+    Total L1 Elapsed Cycles          cycle   2812027652
+    Average L2 Active Cycles         cycle  50055529.21
+    Total L2 Elapsed Cycles          cycle   1207756176
+    Average SM Active Cycles         cycle  47972319.97
+    Total SM Elapsed Cycles          cycle   2812027652
+    Average SMSP Active Cycles       cycle  47969813.99
+    Total SMSP Elapsed Cycles        cycle  11248110608
     -------------------------- ----------- ------------
 
