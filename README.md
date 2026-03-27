@@ -78,13 +78,10 @@ For `m` tokens: `[m, d_model] -> up-proj -> [m, d_ff] -> activation -> down-proj
 
 ### Profile for both Prefill (large N) and Decode (N = 1)
 
-
 ### Grouped GEMM (alternative)
 
-Concatenate expert buffers (pad empty slots to `capacity`) and perform grouped GEMM. Mask out padded outputs afterward.
+Concatenate expert buffers (pad empty slots to `CAP`) and perform grouped GEMM. Mask out padded outputs afterward.
 
-### 7. Combine / gather
 
-Multiply each expert output by its gating weight, sum the `k` contributions per token to produce `[N, d_model]`, and restore the original token order.
 
 
