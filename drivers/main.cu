@@ -78,7 +78,7 @@ int main(int argc, char** argv){
     initialize_host_data(h_input, h_final_output, h_expert_up_proj_weights, h_expert_down_proj_weights);
 
     printf("Allocating and copying data to device ... \n");
-    // enable capacity-aware allocations only when running the `capacity` kernel
+    // enable capacity-aware allocations only when running kernels other than baseline and unfused (unfused has it's own dedicated launcher)
     bool use_capacity = (kernel != "baseline");
     MoEArgs args = allocate_and_copy_to_device(h_input, h_final_output, h_expert_up_proj_weights, h_expert_down_proj_weights, use_capacity);
 

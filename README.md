@@ -1,12 +1,19 @@
-# Sparse Mixture-of-Experts (MoE) — Overview
+# Sparse Mixture-of-Experts (MoE)
 
-A lightweight reference implementation of a sparse Mixture-of-Experts block targeting CUDA/Wmma tensor-core GEMMs. The repository contains three execution variants used for performance and correctness experiments:
+Implementation of a sparse Mixture-of-Experts CUDA workflow. The repository contains multiple execution variants with detailed profiling analysis.
 
-- `unfused`: per-stage kernels, `CAP = N` (naïve, memory-heavy)
-- `baseline`: fused kernels with per-token routing but still overallocated per-expert buffers
-- `capacity`: capacity-aware routing that packs routed tokens into per-expert buffers of size `CAP` to enable larger, more efficient GEMMs
+## Performance Highlights
 
-This README summarizes the block architecture, capacity semantics, and where to find the kernel implementations and profiling notes.
+**Tensor Cores** = **TC**, **CAP** = capacity factor for per-expert buffers.
+
+| TC | Tile | Int8 | CAP | Kernel | ms | Profile | Setup | Notes |
+|----|----|----|-------|--------|-----------|---------|-------|-------|
+| Yes | 16×16×16 | No | No | [unfused](kernels/unfused.cu) | 2780 | [Run 1](prof/md/run1/ncu_details.md) | per-stage separate global kernels, `CAP = N` | overalloc of per-expert buffers |
+| Yes | 16×16×16 | No | No | [baseline](kernels/baseline.cu) | 85.6 | [Run 1](prof/md/run1/ncu_details.md) | full kernel fusion with per-token routing  | overalloc of per-expert buffers  |
+| Yes | 16×16×16 | No | Yes  | [capacity](kernels/capacity.cu) | 61 | [Run 1](prof/md/run1/ncu_details.md) | capacity-aware routing |  |
+| Yes | 16×16×16 | No | Yes | [capacity_v2](kernels/capacity_v2.cu) | 74 | [Run 2](prof/md/run2/ncu_details.md) | XOR swizzle |  |
+| Yes | 16×16×16 | Yes | Yes | [capacity_v3](kernels/capacity_v3.cu) | 71.2 | [Run 3](prof/md/run3/ncu_details.md) | swizzle via ldmatrix (PTX)  |  |
+
 
 ## TL;DR
 
