@@ -1,10 +1,10 @@
- # Run 1 — Nsight Compute: Professional Summary
+ # Run 1 — Nsight Compute: Summary
 
  **Date:** 2026-03-30
 
  Overview
  --------
-This report summarizes Nsight Compute outputs for Run 1 and compares the [capacity](kernels/capacity.cu) and [baseline](kernels/baseline.cu) implementations. The [unfused](kernels/unfused.cu) variant produces separate kernel traces and is not included in the aggregated tables below.
+This report summarizes high level profiling outputs for: [unfused.cu](kernels/unfused.cu), [baseline.cu](kernels/baseline.cu) and [capacity.cu](kernels/capacity.cu). The [unfused.cu](kernels/unfused.cu) variant produces separate kernel traces and is not included in the aggregated tables below. The timings reported for the three workflows ([unfused.cu](kernels/unfused.cu), [baseline.cu](kernels/baseline.cu), and [capacity.cu](kernels/capacity.cu)) use a small configuration — larger configurations cause the device to run out of memory for the [unfused.cu](kernels/unfused.cu) variant.
 
  Configuration
  -------------
@@ -16,24 +16,18 @@ This report summarizes Nsight Compute outputs for Run 1 and compares the [capaci
  constexpr int up_proj_dim = 4;
  ```
 
-Results
--------
-- [unfused](kernels/unfused.cu): 2780 ms (WMMA kernels for `up_proj` and `down_proj` account for `~99%` of latency)
-- [baseline](kernels/baseline.cu): 85.6 ms (high DRAM usage due to naive per-expert over-allocation)
-- [capacity](kernels/capacity.cu): 61 ms
-
-This showcases the strength/necessity of kernel fusion - 32x speedup on raw fusion! Subsequently this showcases how important it is not to waste VRAM - extra +40% speedup of [capacity](kernels/capacity.cu) over [baseline](kernels/baseline.cu) based on sensible per-expert buffer allocation via `capacity_factor`.
-
  Executive Summary
  -----------------
- - **Unfused (per-kernel aggregate):** WMMA `up_proj` / `down_proj` kernels dominate runtime (per-kernel traces).
- - **Baseline (aggregated):** 85.6 ms — elevated DRAM utilization and replay indicate potential locality and coalescing issues.
+ - **Unfused (aggregated):** 2780 ms - WMMA `up_proj` / `down_proj` kernels dominate `99%` of runtime (per-kernel traces).
+ - **Baseline:** 85.6 ms — elevated DRAM utilization and replay indicate potential locality and coalescing issues.
  - **Capacity:** 61 ms — demonstrates improved runtime due to more efficient per-expert buffering and a better compute/memory balance.
 
- Observations
- ------------
- - Kernel fusion delivers significant benefits in this workload; reducing redundant memory traffic and improving data locality should be primary optimization targets.
- - Capacity-aware per-expert buffer allocation materially improves performance compared with naive over-allocation.
+Observations
+------------
+- **Kernel Fusion:** Delivers substantial benefits in this workload; prioritize reducing redundant memory traffic and improving data locality. Measured improvement for the fused implementation is approximately **32×** over the unfused workflow.
+- **Per‑Expert Allocation:** Capacity-aware buffer sizing materially improves performance compared with naive over-allocation — the `capacity` variant shows roughly **+40%** speedup versus `baseline` under this configuration.
+- **Primary Hotspots:** WMMA `up_proj` and `down_proj` kernels dominate the unfused runtime and should be the first optimization targets.
+- **Memory vs Compute:** The `baseline` variant exhibits DRAM-bound behavior; the `capacity` variant shifts the workload toward better compute utilization.
 
 ## GPU Speed Of Light Throughput
 
@@ -55,7 +49,6 @@ This showcases the strength/necessity of kernel fusion - 32x speedup on raw fusi
 - `capacity` (INF): "This workload is utilizing greater than 80.0% of the available compute or memory performance of the device. To further improve performance, work will likely need to be shifted from the most utilized to another unit. Start by analyzing L1 in the Memory Workload Analysis section." (from `ncu_capacity.txt`)
 - `baseline` (OPT): "Memory is more heavily utilized than Compute: Look at the Memory Workload Analysis section to identify the DRAM bottleneck. Check memory replay (coalescing) metrics to make sure you're efficiently utilizing the bytes transferred. Also consider whether it is possible to do more work per memory access (kernel fusion) or whether there are values you can (re)compute." (from `ncu_baseline.txt`)
 
----
 
 ## Launch Statistics
 
@@ -79,7 +72,6 @@ This showcases the strength/necessity of kernel fusion - 32x speedup on raw fusi
 
 **Notes:** All listed fields are present in both profiles; values differ only for `Registers Per Thread` (capacity=72, baseline=70).
 
----
 
 ## Occupancy
 
@@ -99,7 +91,6 @@ This showcases the strength/necessity of kernel fusion - 32x speedup on raw fusi
 - `capacity` (OPT): "Est. Local Speedup: 50% ... The 6.00 theoretical warps per scheduler this kernel can issue according to its occupancy are below the hardware maximum of 12. This kernel's theoretical occupancy (50.0%) is limited by the number of required registers, and the required amount of shared memory." (from `ncu_capacity.txt`)
 - `baseline` (OPT): same note present in `ncu_baseline.txt`.
 
----
 
 ## GPU and Memory Workload Distribution
 
@@ -116,6 +107,5 @@ This showcases the strength/necessity of kernel fusion - 32x speedup on raw fusi
 | Average SMSP Active Cycles | cycle | 47,969,813.99 | 67,269,141.98 |
 | Total SMSP Elapsed Cycles | cycle | 11,248,110,608 | 15,788,888,752 |
 
----
 
 Perform a detailed Nsight Compute analysis of `capacity` for further variants. The `unfused` variant produces separate kernel profiles and is not included in the aggregated tables below.
