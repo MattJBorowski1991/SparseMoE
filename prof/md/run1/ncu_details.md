@@ -1,23 +1,39 @@
-Run 1 — Nsight Compute summary (high level)
+ # Run 1 — Nsight Compute: Professional Summary
 
-This run profiles the unfused, baseline, and capacity implementations using a small configuration that causes the unfused variant to approach out-of-memory.
+ **Date:** 2026-03-30
 
-Configuration
-```
-constexpr int N = 512;
-constexpr int d_model = 4096;
-constexpr int num_batches = 4;
-constexpr int num_experts = 32;
-constexpr int up_proj_dim = 4;
-```
+ Overview
+ --------
+This report summarizes Nsight Compute outputs for Run 1 and compares the [capacity](kernels/capacity.cu) and [baseline](kernels/baseline.cu) implementations. The [unfused](kernels/unfused.cu) variant produces separate kernel traces and is not included in the aggregated tables below.
 
-Objective
-- Perform a detailed Nsight Compute comparison between the `baseline` and `capacity` variants. The `unfused` variant produces separate kernel profiles and is not included in the aggregated tables below.
+ Configuration
+ -------------
+ ```cpp
+ constexpr int N = 512;
+ constexpr int d_model = 4096;
+ constexpr int num_batches = 4;
+ constexpr int num_experts = 32;
+ constexpr int up_proj_dim = 4;
+ ```
 
-Summary
-- Unfused: 114,932.430 ms (WMMA kernels for `up_proj` and `down_proj` account for ~99% of latency)
-- Baseline: 11,250.491 ms (high DRAM usage due to naive per-expert over-allocation)
-- Capacity: 1,308.362 ms
+Results
+-------
+- [unfused](kernels/unfused.cu): 2780 ms (WMMA kernels for `up_proj` and `down_proj` account for `~99%` of latency)
+- [baseline](kernels/baseline.cu): 85.6 ms (high DRAM usage due to naive per-expert over-allocation)
+- [capacity](kernels/capacity.cu): 61 ms
+
+This showcases the strength/necessity of kernel fusion - 32x speedup on raw fusion! Subsequently this showcases how important it is not to waste VRAM - extra +40% speedup of [capacity](kernels/capacity.cu) over [baseline](kernels/baseline.cu) based on sensible per-expert buffer allocation via `capacity_factor`.
+
+ Executive Summary
+ -----------------
+ - **Unfused (per-kernel aggregate):** WMMA `up_proj` / `down_proj` kernels dominate runtime (per-kernel traces).
+ - **Baseline (aggregated):** 85.6 ms — elevated DRAM utilization and replay indicate potential locality and coalescing issues.
+ - **Capacity:** 61 ms — demonstrates improved runtime due to more efficient per-expert buffering and a better compute/memory balance.
+
+ Observations
+ ------------
+ - Kernel fusion delivers significant benefits in this workload; reducing redundant memory traffic and improving data locality should be primary optimization targets.
+ - Capacity-aware per-expert buffer allocation materially improves performance compared with naive over-allocation.
 
 ## GPU Speed Of Light Throughput
 
@@ -102,3 +118,4 @@ Summary
 
 ---
 
+Perform a detailed Nsight Compute analysis of `capacity` for further variants. The `unfused` variant produces separate kernel profiles and is not included in the aggregated tables below.
