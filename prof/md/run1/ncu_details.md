@@ -33,7 +33,7 @@ The [unfused.cu](kernels/unfused.cu) variant produces separate kernel traces and
 
 ## GPU Speed Of Light Throughput
 
-> <u>Author's note:</u> Crucial metrics all increased: Memory Throughput, DRAM Throughput, Compute Throughput, and both cache throughputs.
+> <u>Comment:</u> Crucial metrics all increased: Memory Throughput, DRAM Throughput, Compute Throughput, and both cache throughputs.
 
 | Metric Name | Metric Unit | baseline | capacity |
 |---|---:|---:|---:|
@@ -56,7 +56,7 @@ The [unfused.cu](kernels/unfused.cu) variant produces separate kernel traces and
 
 ## Launch Statistics
 
-> <u>Author's note:</u> No change in Launch Statisticts other than slight increase in Register pressure.
+> <u>Comment:</u> No change in Launch Statisticts.
 
 | Metric Name | Metric Unit | baseline | capacity |
 |---|---:|---:|---:|
@@ -76,9 +76,11 @@ The [unfused.cu](kernels/unfused.cu) variant produces separate kernel traces and
 | Uses Green Context |  | 0 | 0 |
 | Waves Per SM |  | 11.77 | 11.77 |
 
+Note: the `33.02 Kbyte/block` static shared-memory figure comes from two WMMA double-buffer regions plus small routing scratch arrays. Each WMMA region allocates `2 x 8 x 16 x 16 x 2 B = 16384 B`, where `2` is the double-buffer stage count, `8` is `WARP_TILES_X * WARP_TILES_Y = 4 * 2` warps per block, `16 x 16` is one WMMA tile, and `2 B` is the size of a half value. The fused `baseline` and `capacity` kernels instantiate two such regions (`16384 + 16384`) and add `256 B` for `max_vals` and `max_indices`, for a total of `33024 B = 33.024 kB`.
+
 ## Occupancy
 
-> <u>Author's note:</u> Restrictive limits on block count in both kernels due to SRAM and Register pressure..
+> <u>Comment:</u> Restrictive limits on block count in both kernels due to SRAM and Register pressure..
 
 | Metric Name | Metric Unit | baseline | capacity |
 |---|---:|---:|---:|
@@ -115,9 +117,12 @@ The [unfused.cu](kernels/unfused.cu) variant produces separate kernel traces and
 
 ---
 
-## Selective Nsight Compute Analysis — `capacity.cu`
 
-This section presents a focused analysis of Nsight Compute results for [capacity.cu](kernels/capacity.cu). It highlights the primary bottlenecks, the source-level causes identified by the profiler, and concise recommendations for targeted fixes. For broader comparisons and additional detail see [Run 2](prof/md/run2/ncu_details.md) and [Run 3](prof/md/run3/ncu_details.md).
+## Selective Nsight Compute Analysis
+
+This section presents a focused analysis of Nsight Compute results for [capacity.cu](kernels/capacity.cu). 
+
+It highlights the primary bottlenecks, the source-level causes identified by the profiler, and concise recommendations for targeted fixes. For broader comparisons and additional detail see [Run 2](prof/md/run2/ncu_details.md).
 
 ![Capacity - Bottlenecks](../../images/run1/capacity_bottlenecks.jpg)
 

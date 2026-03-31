@@ -11,6 +11,8 @@
     do {    \
         dim3 threads(THREADS_PER_WARP * WARPS_PER_BLOCK);   \
         dim3 blocks( (d_model + WMMA_N * WARP_TILES_X - 1) / (WMMA_N * WARP_TILES_X), (N + WMMA_M * WARP_TILES_Y - 1) / (WMMA_M * WARP_TILES_Y), args.num_batches );    \
+        CHECK_CUDA(cudaFuncSetAttribute((const void*)MOE_KERNEL, \
+            cudaFuncAttributeMaxDynamicSharedMemorySize, 102400)); \
         MOE_KERNEL<<<blocks, threads>>>(args);   \
     } while(0)
 #endif
