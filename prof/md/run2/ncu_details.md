@@ -1,50 +1,46 @@
-Swizzling - how to choose best way:
+ # Run 2 — Nsight Compute: XOR swizzle
 
-You choose swizzle by:
+ Overview
+ --------
+This report summarizes the first application of swizzling implemented in [capacity_v2](kernels/capacity_v2.cu).
 
-Access pattern driven
+The XOR swizzling was applied around the `cp.async` staging path inside the tensor-core GEMM loop. 
 
-Example: matrix transpose tile in shared memory (tile[row][col] write, tile[col][row] read).
-Best swizzle: column skew/XOR on column index, e.g. col' = col ^ (row & 0x7).
-Why best: removes classic transpose bank conflicts with tiny arithmetic overhead.
-
-Bank-layout driven
-
-Example: 32-bank SRAM, warp reads contiguous 32-bit words but stride causes many lanes to hit same bank.
-Best swizzle: permutation matched to bank bits, e.g. idx' = idx ^ (idx >> 5) (or row-group XOR) so bank-id bits are decorrelated.
-Why best: directly targets bank mapping hardware, maximizing bank spread.
-
-Objective driven (speed vs cost)
-
-Example: latency-critical kernel with high register pressure.
-Best swizzle: minimal swizzle (or only swizzle one tensor), e.g. swizzle only B, leave A linear.
-Why best: captures most conflict reduction while avoiding extra instructions/register/shared overhead that can hurt occupancy.
-
-Best method for our app in v2: try a small set (no swizzle, XOR with row&1/3/7, maybe only on B), then keep the one with lowest L1 Wavefronts Shared Excessive and best cudaEvent time.
+Here we compare both [capacity](kernels/capacity.cu) and [capacity_v2](kernels/capacity_v2.cu) via a detailed Nsight Compute Analysis.
 
 
-## First swizzling attempt in `capacity_v2`
+### Implementation
 
-The first concrete swizzling experiment in `capacity_v2` was a shared-memory XOR swizzle applied around the `cp.async` staging path inside the tensor-core GEMM loop.
+Overview
+--------
+This experiment applies an XOR-based swizzle to the shared-memory staging path used by `cp.async` in the tensor-core GEMM loop. The goal is to reduce shared-memory bank conflicts and improve global memory access coalescing for the tiled loads.
 
-### What was changed
+Key changes
+-----------
+1. Staging layout:
+	- `cp.async` was modified to write tile fragments into a permuted (swizzled) shared-memory layout instead of the original linear layout.
+2. Swizzle mapping:
+	- The column index used for each `cp.async` destination was transformed using an XOR-based mapping. The mapping is applied at 16-byte chunk granularity to match the `cp.async` transaction size.
+3. Unsizzle step:
+	- Prior to invoking `wmma::load_matrix_sync`, the swizzled tile in shared memory is restored (unswizzled) to the linear layout expected by the WMMA API.
 
-- `cp.async` no longer wrote tiles into a plain linear shared-memory layout.
-- Instead, the destination column index was permuted with an XOR-based mapping.
-- Because `cp.async` writes 16-byte chunks, the final version of this experiment swizzled at 16-byte chunk granularity rather than per-element granularity.
-- Before `wmma::load_matrix_sync`, the staged tile was unswizzled back into the linear layout expected by the WMMA API.
+Implementation notes
+--------------------
+- Granularity: swizzling at 16‑byte chunk granularity aligns with `cp.async` transfer granularity, reducing bookkeeping overhead compared with per-element permutes.
+- Cost model: the transformation adds lightweight index arithmetic on the hot path and an explicit unswizzle copy step before the WMMA load; both increase instruction count and shared-memory traffic.
+- Correctness: the unswizzle restores the original ordering required by `wmma::load_matrix_sync`, preserving semantic equivalence with the baseline GEMM.
 
-### Why it seemed promising
+The XOR swizzle implemented in this experiment operates at 16‑byte chunk granularity (groups of eight 2‑byte elements). In this pattern odd rows swap the two eight‑chunk halves; an illustrative mapping follows:
 
-The goal was to reduce shared-memory bank conflicts and replay pressure reported by Nsight Compute near the shared-memory load path. In principle, distributing accesses more evenly across banks can reduce `L1 Wavefronts Shared Excessive` and improve the operand feed into tensor-core instructions.
+| Row | Chunks 0–7 | Chunks 8–15 |
+|---:|:---|:---|
+| 0 | 0 1 2 3 4 5 6 7 | 8 9 10 11 12 13 14 15 |
+| 1 | 8 9 10 11 12 13 14 15 | 0 1 2 3 4 5 6 7 |
+| 2 | 0 1 2 3 4 5 6 7 | 8 9 10 11 12 13 14 15 |
+| 3 | 8 9 10 11 12 13 14 15 | 0 1 2 3 4 5 6 7 |
 
-### Why it was supposed to help
+This compact representation highlights the per‑row XOR permutation used for the shared‑memory tile layout.
 
-The expected mechanism was:
-
-1. `cp.async` writes land in a bank-friendlier permuted shared-memory layout.
-2. Shared-memory bank conflicts decrease during staging-related access.
-3. Tensor-core operand loading becomes cleaner, reducing replay overhead.
 
 ### What actually happened
 
@@ -55,11 +51,6 @@ Although the swizzle reduced some profiler-visible conflict symptoms, it require
 - more instructions in the critical loop,
 - and in some cases more register pressure.
 
-In practice, the real `cudaEventRecord` runtime got worse even when some Nsight Compute metrics looked better.
-
-### Takeaway
-
-This first swizzling attempt was a valid experiment, but in this kernel the overhead of swizzle + unswizzle outweighed the benefit. That result motivated the later `ldmatrix + mma.sync` experiment, which tried to avoid the explicit unswizzle step entirely.
 
 
 
