@@ -1,0 +1,17 @@
+Allocating and copying data to device ... 
+Running 3 warmup runs... 
+Total duration via cudaEventRecord: 37.445 ms
+Total duration via cudaEventRecord: 36.980 ms
+Total duration via cudaEventRecord: 37.006 ms
+Running 10 profiling runs... 
+Total duration via cudaEventRecord: 37.502 ms
+Total duration via cudaEventRecord: 37.636 ms
+Total duration via cudaEventRecord: 37.272 ms
+Total duration via cudaEventRecord: 37.344 ms
+Total duration via cudaEventRecord: 37.487 ms
+Total duration via cudaEventRecord: 37.542 ms
+Total duration via cudaEventRecord: 37.549 ms
+Total duration via cudaEventRecord: 37.492 ms
+Total duration via cudaEventRecord: 37.819 ms
+Total duration via cudaEventRecord: 37.550 ms
+Profiling is complete.

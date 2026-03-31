@@ -1,0 +1,1036 @@
+==PROF== Connected to process 30351 (/teamspace/studios/this_studio/SparseMoE/bin/profile_capacity)
+==PROF== Profiling "capacity(MoEArgs)" - 0: 0%
+==WARNING== Backing up device memory in system memory. Kernel replay might be slow. Consider using "--replay-mode application" to avoid memory save-and-restore.
+....50%....100% - 8 passes
+==PROF== Profiling "capacity(MoEArgs)" - 1: 0%....50%....100% - 8 passes
+==PROF== Profiling "capacity(MoEArgs)" - 2: 0%....50%....100% - 8 passes
+==PROF== Profiling "capacity(MoEArgs)" - 3: 0%....50%....100% - 8 passes
+==PROF== Profiling "capacity(MoEArgs)" - 4: 0%....50%....100% - 8 passes
+==PROF== Profiling "capacity(MoEArgs)" - 5: 0%....50%....100% - 8 passes
+==PROF== Profiling "capacity(MoEArgs)" - 6: 0%....50%....100% - 8 passes
+==PROF== Profiling "capacity(MoEArgs)" - 7: 0%....50%....100% - 8 passes
+==PROF== Profiling "capacity(MoEArgs)" - 8: 0%....50%....100% - 8 passes
+==PROF== Profiling "capacity(MoEArgs)" - 9: 0%....50%....100% - 8 passes
+==PROF== Profiling "capacity(MoEArgs)" - 10: 0%....50%....100% - 8 passes
+==PROF== Profiling "capacity(MoEArgs)" - 11: 0%....50%....100% - 8 passes
+==PROF== Profiling "capacity(MoEArgs)" - 12: 0%....50%....100% - 8 passes
+Allocating and copying data to device ... 
+Running 3 warmup runs... 
+Total duration via cudaEventRecord: 15525.999 ms
+Total duration via cudaEventRecord: 15270.340 ms
+Total duration via cudaEventRecord: 15005.487 ms
+Running 10 profiling runs... 
+Total duration via cudaEventRecord: 15280.597 ms
+Total duration via cudaEventRecord: 15217.215 ms
+Total duration via cudaEventRecord: 15172.085 ms
+Total duration via cudaEventRecord: 15152.092 ms
+Total duration via cudaEventRecord: 15279.301 ms
+Total duration via cudaEventRecord: 15302.433 ms
+Total duration via cudaEventRecord: 15238.996 ms
+Total duration via cudaEventRecord: 15318.668 ms
+Total duration via cudaEventRecord: 15320.562 ms
+Total duration via cudaEventRecord: 15291.386 ms
+Profiling is complete.
+==PROF== Disconnected from process 30351
+[30351] profile_capacity@127.0.0.1
+  capacity(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+    Section: GPU Speed Of Light Throughput
+    ----------------------- ----------- ------------
+    Metric Name             Metric Unit Metric Value
+    ----------------------- ----------- ------------
+    DRAM Frequency                  Ghz         6.24
+    SM Frequency                    Mhz       804.67
+    Elapsed Cycles                cycle     30063030
+    Memory Throughput                 %        86.24
+    DRAM Throughput                   %        86.24
+    Duration                         ms        36.97
+    L1/TEX Cache Throughput           %        84.05
+    L2 Cache Throughput               %        32.88
+    SM Active Cycles              cycle  29320941.95
+    Compute (SM) Throughput           %        33.63
+    ----------------------- ----------- ------------
+
+    INF   This workload is utilizing greater than 80.0% of the available compute or memory performance of the device.   
+          To further improve performance, work will likely need to be shifted from the most utilized to another unit.   
+          Start by analyzing DRAM in the Memory Workload Analysis section.                                              
+
+    Section: Launch Statistics
+    -------------------------------- --------------- ---------------
+    Metric Name                          Metric Unit    Metric Value
+    -------------------------------- --------------- ---------------
+    Block Size                                                   256
+    Function Cache Configuration                     CachePreferNone
+    Grid Size                                                   2048
+    Registers Per Thread             register/thread              72
+    Shared Memory Configuration Size           Kbyte          102.40
+    Driver Shared Memory Per Block       Kbyte/block            1.02
+    Dynamic Shared Memory Per Block       byte/block               0
+    Static Shared Memory Per Block       Kbyte/block           33.02
+    # SMs                                         SM              58
+    Stack Size                                                  1024
+    Threads                                   thread          524288
+    # TPCs                                                        29
+    Enabled TPC IDs                                              all
+    Uses Green Context                                             0
+    Waves Per SM                                               11.77
+    -------------------------------- --------------- ---------------
+
+    Section: Occupancy
+    ------------------------------- ----------- ------------
+    Metric Name                     Metric Unit Metric Value
+    ------------------------------- ----------- ------------
+    Block Limit SM                        block           24
+    Block Limit Registers                 block            3
+    Block Limit Shared Mem                block            3
+    Block Limit Warps                     block            6
+    Theoretical Active Warps per SM        warp           24
+    Theoretical Occupancy                     %           50
+    Achieved Occupancy                        %        49.19
+    Achieved Active Warps Per SM           warp        23.61
+    ------------------------------- ----------- ------------
+
+    OPT   Est. Local Speedup: 50%                                                                                       
+          The 6.00 theoretical warps per scheduler this kernel can issue according to its occupancy are below the       
+          hardware maximum of 12. This kernel's theoretical occupancy (50.0%) is limited by the number of required      
+          registers, and the required amount of shared memory.                                                          
+
+    Section: GPU and Memory Workload Distribution
+    -------------------------- ----------- ------------
+    Metric Name                Metric Unit Metric Value
+    -------------------------- ----------- ------------
+    Average DRAM Active Cycles       cycle    199112960
+    Total DRAM Elapsed Cycles        cycle   1385345024
+    Average L1 Active Cycles         cycle  29320941.95
+    Total L1 Elapsed Cycles          cycle   1723078788
+    Average L2 Active Cycles         cycle  30315917.54
+    Total L2 Elapsed Cycles          cycle    732076992
+    Average SM Active Cycles         cycle  29320941.95
+    Total SM Elapsed Cycles          cycle   1723078788
+    Average SMSP Active Cycles       cycle  29318292.22
+    Total SMSP Elapsed Cycles        cycle   6892315152
+    -------------------------- ----------- ------------
+
+  capacity(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+    Section: GPU Speed Of Light Throughput
+    ----------------------- ----------- ------------
+    Metric Name             Metric Unit Metric Value
+    ----------------------- ----------- ------------
+    DRAM Frequency                  Ghz         6.24
+    SM Frequency                    Mhz       805.34
+    Elapsed Cycles                cycle     30197455
+    Memory Throughput                 %        85.85
+    DRAM Throughput                   %        85.85
+    Duration                         ms        37.12
+    L1/TEX Cache Throughput           %        84.14
+    L2 Cache Throughput               %        32.76
+    SM Active Cycles              cycle  29290947.55
+    Compute (SM) Throughput           %        33.45
+    ----------------------- ----------- ------------
+
+    INF   This workload is utilizing greater than 80.0% of the available compute or memory performance of the device.   
+          To further improve performance, work will likely need to be shifted from the most utilized to another unit.   
+          Start by analyzing DRAM in the Memory Workload Analysis section.                                              
+
+    Section: Launch Statistics
+    -------------------------------- --------------- ---------------
+    Metric Name                          Metric Unit    Metric Value
+    -------------------------------- --------------- ---------------
+    Block Size                                                   256
+    Function Cache Configuration                     CachePreferNone
+    Grid Size                                                   2048
+    Registers Per Thread             register/thread              72
+    Shared Memory Configuration Size           Kbyte          102.40
+    Driver Shared Memory Per Block       Kbyte/block            1.02
+    Dynamic Shared Memory Per Block       byte/block               0
+    Static Shared Memory Per Block       Kbyte/block           33.02
+    # SMs                                         SM              58
+    Stack Size                                                  1024
+    Threads                                   thread          524288
+    # TPCs                                                        29
+    Enabled TPC IDs                                              all
+    Uses Green Context                                             0
+    Waves Per SM                                               11.77
+    -------------------------------- --------------- ---------------
+
+    Section: Occupancy
+    ------------------------------- ----------- ------------
+    Metric Name                     Metric Unit Metric Value
+    ------------------------------- ----------- ------------
+    Block Limit SM                        block           24
+    Block Limit Registers                 block            3
+    Block Limit Shared Mem                block            3
+    Block Limit Warps                     block            6
+    Theoretical Active Warps per SM        warp           24
+    Theoretical Occupancy                     %           50
+    Achieved Occupancy                        %        49.25
+    Achieved Active Warps Per SM           warp        23.64
+    ------------------------------- ----------- ------------
+
+    OPT   Est. Local Speedup: 50%                                                                                       
+          The 6.00 theoretical warps per scheduler this kernel can issue according to its occupancy are below the       
+          hardware maximum of 12. This kernel's theoretical occupancy (50.0%) is limited by the number of required      
+          registers, and the required amount of shared memory.                                                          
+
+    Section: GPU and Memory Workload Distribution
+    -------------------------- ----------- ------------
+    Metric Name                Metric Unit Metric Value
+    -------------------------- ----------- ------------
+    Average DRAM Active Cycles       cycle 199001837.33
+    Total DRAM Elapsed Cycles        cycle   1390829568
+    Average L1 Active Cycles         cycle  29290947.55
+    Total L1 Elapsed Cycles          cycle   1732082430
+    Average L2 Active Cycles         cycle  30362227.46
+    Total L2 Elapsed Cycles          cycle    734974584
+    Average SM Active Cycles         cycle  29290947.55
+    Total SM Elapsed Cycles          cycle   1732082430
+    Average SMSP Active Cycles       cycle  29283142.16
+    Total SMSP Elapsed Cycles        cycle   6928329720
+    -------------------------- ----------- ------------
+
+  capacity(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+    Section: GPU Speed Of Light Throughput
+    ----------------------- ----------- ------------
+    Metric Name             Metric Unit Metric Value
+    ----------------------- ----------- ------------
+    DRAM Frequency                  Ghz         6.24
+    SM Frequency                    Mhz       805.47
+    Elapsed Cycles                cycle     29946979
+    Memory Throughput                 %        86.49
+    DRAM Throughput                   %        86.49
+    Duration                         ms        36.80
+    L1/TEX Cache Throughput           %        84.12
+    L2 Cache Throughput               %        32.99
+    SM Active Cycles              cycle  29297373.60
+    Compute (SM) Throughput           %        33.56
+    ----------------------- ----------- ------------
+
+    INF   This workload is utilizing greater than 80.0% of the available compute or memory performance of the device.   
+          To further improve performance, work will likely need to be shifted from the most utilized to another unit.   
+          Start by analyzing DRAM in the Memory Workload Analysis section.                                              
+
+    Section: Launch Statistics
+    -------------------------------- --------------- ---------------
+    Metric Name                          Metric Unit    Metric Value
+    -------------------------------- --------------- ---------------
+    Block Size                                                   256
+    Function Cache Configuration                     CachePreferNone
+    Grid Size                                                   2048
+    Registers Per Thread             register/thread              72
+    Shared Memory Configuration Size           Kbyte          102.40
+    Driver Shared Memory Per Block       Kbyte/block            1.02
+    Dynamic Shared Memory Per Block       byte/block               0
+    Static Shared Memory Per Block       Kbyte/block           33.02
+    # SMs                                         SM              58
+    Stack Size                                                  1024
+    Threads                                   thread          524288
+    # TPCs                                                        29
+    Enabled TPC IDs                                              all
+    Uses Green Context                                             0
+    Waves Per SM                                               11.77
+    -------------------------------- --------------- ---------------
+
+    Section: Occupancy
+    ------------------------------- ----------- ------------
+    Metric Name                     Metric Unit Metric Value
+    ------------------------------- ----------- ------------
+    Block Limit SM                        block           24
+    Block Limit Registers                 block            3
+    Block Limit Shared Mem                block            3
+    Block Limit Warps                     block            6
+    Theoretical Active Warps per SM        warp           24
+    Theoretical Occupancy                     %           50
+    Achieved Occupancy                        %        49.25
+    Achieved Active Warps Per SM           warp        23.64
+    ------------------------------- ----------- ------------
+
+    OPT   Est. Local Speedup: 50%                                                                                       
+          The 6.00 theoretical warps per scheduler this kernel can issue according to its occupancy are below the       
+          hardware maximum of 12. This kernel's theoretical occupancy (50.0%) is limited by the number of required      
+          registers, and the required amount of shared memory.                                                          
+
+    Section: GPU and Memory Workload Distribution
+    -------------------------- ----------- ------------
+    Metric Name                Metric Unit Metric Value
+    -------------------------- ----------- ------------
+    Average DRAM Active Cycles       cycle 198768522.67
+    Total DRAM Elapsed Cycles        cycle   1378944000
+    Average L1 Active Cycles         cycle  29297373.60
+    Total L1 Elapsed Cycles          cycle   1726728284
+    Average L2 Active Cycles         cycle  30301158.38
+    Total L2 Elapsed Cycles          cycle    728694384
+    Average SM Active Cycles         cycle  29297373.60
+    Total SM Elapsed Cycles          cycle   1726728284
+    Average SMSP Active Cycles       cycle  29293638.94
+    Total SMSP Elapsed Cycles        cycle   6906913136
+    -------------------------- ----------- ------------
+
+  capacity(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+    Section: GPU Speed Of Light Throughput
+    ----------------------- ----------- ------------
+    Metric Name             Metric Unit Metric Value
+    ----------------------- ----------- ------------
+    DRAM Frequency                  Ghz         6.24
+    SM Frequency                    Mhz       806.31
+    Elapsed Cycles                cycle     30201099
+    Memory Throughput                 %        85.94
+    DRAM Throughput                   %        85.94
+    Duration                         ms        37.06
+    L1/TEX Cache Throughput           %        84.06
+    L2 Cache Throughput               %        32.77
+    SM Active Cycles              cycle  29317587.59
+    Compute (SM) Throughput           %        33.68
+    ----------------------- ----------- ------------
+
+    INF   This workload is utilizing greater than 80.0% of the available compute or memory performance of the device.   
+          To further improve performance, work will likely need to be shifted from the most utilized to another unit.   
+          Start by analyzing DRAM in the Memory Workload Analysis section.                                              
+
+    Section: Launch Statistics
+    -------------------------------- --------------- ---------------
+    Metric Name                          Metric Unit    Metric Value
+    -------------------------------- --------------- ---------------
+    Block Size                                                   256
+    Function Cache Configuration                     CachePreferNone
+    Grid Size                                                   2048
+    Registers Per Thread             register/thread              72
+    Shared Memory Configuration Size           Kbyte          102.40
+    Driver Shared Memory Per Block       Kbyte/block            1.02
+    Dynamic Shared Memory Per Block       byte/block               0
+    Static Shared Memory Per Block       Kbyte/block           33.02
+    # SMs                                         SM              58
+    Stack Size                                                  1024
+    Threads                                   thread          524288
+    # TPCs                                                        29
+    Enabled TPC IDs                                              all
+    Uses Green Context                                             0
+    Waves Per SM                                               11.77
+    -------------------------------- --------------- ---------------
+
+    Section: Occupancy
+    ------------------------------- ----------- ------------
+    Metric Name                     Metric Unit Metric Value
+    ------------------------------- ----------- ------------
+    Block Limit SM                        block           24
+    Block Limit Registers                 block            3
+    Block Limit Shared Mem                block            3
+    Block Limit Warps                     block            6
+    Theoretical Active Warps per SM        warp           24
+    Theoretical Occupancy                     %           50
+    Achieved Occupancy                        %        49.25
+    Achieved Active Warps Per SM           warp        23.64
+    ------------------------------- ----------- ------------
+
+    OPT   Est. Local Speedup: 50%                                                                                       
+          The 6.00 theoretical warps per scheduler this kernel can issue according to its occupancy are below the       
+          hardware maximum of 12. This kernel's theoretical occupancy (50.0%) is limited by the number of required      
+          registers, and the required amount of shared memory.                                                          
+
+    Section: GPU and Memory Workload Distribution
+    -------------------------- ----------- ------------
+    Metric Name                Metric Unit Metric Value
+    -------------------------- ----------- ------------
+    Average DRAM Active Cycles       cycle    198921944
+    Total DRAM Elapsed Cycles        cycle   1388762112
+    Average L1 Active Cycles         cycle  29317587.59
+    Total L1 Elapsed Cycles          cycle   1720362360
+    Average L2 Active Cycles         cycle  30299051.46
+    Total L2 Elapsed Cycles          cycle    733882560
+    Average SM Active Cycles         cycle  29317587.59
+    Total SM Elapsed Cycles          cycle   1720362360
+    Average SMSP Active Cycles       cycle  29313356.46
+    Total SMSP Elapsed Cycles        cycle   6881449440
+    -------------------------- ----------- ------------
+
+  capacity(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+    Section: GPU Speed Of Light Throughput
+    ----------------------- ----------- ------------
+    Metric Name             Metric Unit Metric Value
+    ----------------------- ----------- ------------
+    DRAM Frequency                  Ghz         6.24
+    SM Frequency                    Mhz       807.18
+    Elapsed Cycles                cycle     30094796
+    Memory Throughput                 %        86.37
+    DRAM Throughput                   %        86.37
+    Duration                         ms        36.89
+    L1/TEX Cache Throughput           %        84.06
+    L2 Cache Throughput               %        32.93
+    SM Active Cycles              cycle  29316008.34
+    Compute (SM) Throughput           %        33.46
+    ----------------------- ----------- ------------
+
+    INF   This workload is utilizing greater than 80.0% of the available compute or memory performance of the device.   
+          To further improve performance, work will likely need to be shifted from the most utilized to another unit.   
+          Start by analyzing DRAM in the Memory Workload Analysis section.                                              
+
+    Section: Launch Statistics
+    -------------------------------- --------------- ---------------
+    Metric Name                          Metric Unit    Metric Value
+    -------------------------------- --------------- ---------------
+    Block Size                                                   256
+    Function Cache Configuration                     CachePreferNone
+    Grid Size                                                   2048
+    Registers Per Thread             register/thread              72
+    Shared Memory Configuration Size           Kbyte          102.40
+    Driver Shared Memory Per Block       Kbyte/block            1.02
+    Dynamic Shared Memory Per Block       byte/block               0
+    Static Shared Memory Per Block       Kbyte/block           33.02
+    # SMs                                         SM              58
+    Stack Size                                                  1024
+    Threads                                   thread          524288
+    # TPCs                                                        29
+    Enabled TPC IDs                                              all
+    Uses Green Context                                             0
+    Waves Per SM                                               11.77
+    -------------------------------- --------------- ---------------
+
+    Section: Occupancy
+    ------------------------------- ----------- ------------
+    Metric Name                     Metric Unit Metric Value
+    ------------------------------- ----------- ------------
+    Block Limit SM                        block           24
+    Block Limit Registers                 block            3
+    Block Limit Shared Mem                block            3
+    Block Limit Warps                     block            6
+    Theoretical Active Warps per SM        warp           24
+    Theoretical Occupancy                     %           50
+    Achieved Occupancy                        %        49.26
+    Achieved Active Warps Per SM           warp        23.64
+    ------------------------------- ----------- ------------
+
+    OPT   Est. Local Speedup: 50%                                                                                       
+          The 6.00 theoretical warps per scheduler this kernel can issue according to its occupancy are below the       
+          hardware maximum of 12. This kernel's theoretical occupancy (50.0%) is limited by the number of required      
+          registers, and the required amount of shared memory.                                                          
+
+    Section: GPU and Memory Workload Distribution
+    -------------------------- ----------- ------------
+    Metric Name                Metric Unit Metric Value
+    -------------------------- ----------- ------------
+    Average DRAM Active Cycles       cycle 198991874.67
+    Total DRAM Elapsed Cycles        cycle   1382375424
+    Average L1 Active Cycles         cycle  29316008.34
+    Total L1 Elapsed Cycles          cycle   1731660184
+    Average L2 Active Cycles         cycle  30242546.38
+    Total L2 Elapsed Cycles          cycle    730508208
+    Average SM Active Cycles         cycle  29316008.34
+    Total SM Elapsed Cycles          cycle   1731660184
+    Average SMSP Active Cycles       cycle  29312769.12
+    Total SMSP Elapsed Cycles        cycle   6926640736
+    -------------------------- ----------- ------------
+
+  capacity(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+    Section: GPU Speed Of Light Throughput
+    ----------------------- ----------- ------------
+    Metric Name             Metric Unit Metric Value
+    ----------------------- ----------- ------------
+    DRAM Frequency                  Ghz         6.24
+    SM Frequency                    Mhz       807.52
+    Elapsed Cycles                cycle     30059644
+    Memory Throughput                 %        86.46
+    DRAM Throughput                   %        86.46
+    Duration                         ms        36.84
+    L1/TEX Cache Throughput           %        84.04
+    L2 Cache Throughput               %        33.01
+    SM Active Cycles              cycle  29324907.17
+    Compute (SM) Throughput           %        33.49
+    ----------------------- ----------- ------------
+
+    INF   This workload is utilizing greater than 80.0% of the available compute or memory performance of the device.   
+          To further improve performance, work will likely need to be shifted from the most utilized to another unit.   
+          Start by analyzing DRAM in the Memory Workload Analysis section.                                              
+
+    Section: Launch Statistics
+    -------------------------------- --------------- ---------------
+    Metric Name                          Metric Unit    Metric Value
+    -------------------------------- --------------- ---------------
+    Block Size                                                   256
+    Function Cache Configuration                     CachePreferNone
+    Grid Size                                                   2048
+    Registers Per Thread             register/thread              72
+    Shared Memory Configuration Size           Kbyte          102.40
+    Driver Shared Memory Per Block       Kbyte/block            1.02
+    Dynamic Shared Memory Per Block       byte/block               0
+    Static Shared Memory Per Block       Kbyte/block           33.02
+    # SMs                                         SM              58
+    Stack Size                                                  1024
+    Threads                                   thread          524288
+    # TPCs                                                        29
+    Enabled TPC IDs                                              all
+    Uses Green Context                                             0
+    Waves Per SM                                               11.77
+    -------------------------------- --------------- ---------------
+
+    Section: Occupancy
+    ------------------------------- ----------- ------------
+    Metric Name                     Metric Unit Metric Value
+    ------------------------------- ----------- ------------
+    Block Limit SM                        block           24
+    Block Limit Registers                 block            3
+    Block Limit Shared Mem                block            3
+    Block Limit Warps                     block            6
+    Theoretical Active Warps per SM        warp           24
+    Theoretical Occupancy                     %           50
+    Achieved Occupancy                        %        49.32
+    Achieved Active Warps Per SM           warp        23.67
+    ------------------------------- ----------- ------------
+
+    OPT   Est. Local Speedup: 50%                                                                                       
+          The 6.00 theoretical warps per scheduler this kernel can issue according to its occupancy are below the       
+          hardware maximum of 12. This kernel's theoretical occupancy (50.0%) is limited by the number of required      
+          registers, and the required amount of shared memory.                                                          
+
+    Section: GPU and Memory Workload Distribution
+    -------------------------- ----------- ------------
+    Metric Name                Metric Unit Metric Value
+    -------------------------- ----------- ------------
+    Average DRAM Active Cycles       cycle 198888098.67
+    Total DRAM Elapsed Cycles        cycle   1380250624
+    Average L1 Active Cycles         cycle  29324907.17
+    Total L1 Elapsed Cycles          cycle   1730268874
+    Average L2 Active Cycles         cycle  30247168.67
+    Total L2 Elapsed Cycles          cycle    729384528
+    Average SM Active Cycles         cycle  29324907.17
+    Total SM Elapsed Cycles          cycle   1730268874
+    Average SMSP Active Cycles       cycle  29320197.42
+    Total SMSP Elapsed Cycles        cycle   6921075496
+    -------------------------- ----------- ------------
+
+  capacity(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+    Section: GPU Speed Of Light Throughput
+    ----------------------- ----------- ------------
+    Metric Name             Metric Unit Metric Value
+    ----------------------- ----------- ------------
+    DRAM Frequency                  Ghz         6.24
+    SM Frequency                    Mhz       807.85
+    Elapsed Cycles                cycle     30065578
+    Memory Throughput                 %        86.41
+    DRAM Throughput                   %        86.41
+    Duration                         ms        36.84
+    L1/TEX Cache Throughput           %        83.96
+    L2 Cache Throughput               %        32.96
+    SM Active Cycles              cycle  29351601.69
+    Compute (SM) Throughput           %        33.45
+    ----------------------- ----------- ------------
+
+    INF   This workload is utilizing greater than 80.0% of the available compute or memory performance of the device.   
+          To further improve performance, work will likely need to be shifted from the most utilized to another unit.   
+          Start by analyzing DRAM in the Memory Workload Analysis section.                                              
+
+    Section: Launch Statistics
+    -------------------------------- --------------- ---------------
+    Metric Name                          Metric Unit    Metric Value
+    -------------------------------- --------------- ---------------
+    Block Size                                                   256
+    Function Cache Configuration                     CachePreferNone
+    Grid Size                                                   2048
+    Registers Per Thread             register/thread              72
+    Shared Memory Configuration Size           Kbyte          102.40
+    Driver Shared Memory Per Block       Kbyte/block            1.02
+    Dynamic Shared Memory Per Block       byte/block               0
+    Static Shared Memory Per Block       Kbyte/block           33.02
+    # SMs                                         SM              58
+    Stack Size                                                  1024
+    Threads                                   thread          524288
+    # TPCs                                                        29
+    Enabled TPC IDs                                              all
+    Uses Green Context                                             0
+    Waves Per SM                                               11.77
+    -------------------------------- --------------- ---------------
+
+    Section: Occupancy
+    ------------------------------- ----------- ------------
+    Metric Name                     Metric Unit Metric Value
+    ------------------------------- ----------- ------------
+    Block Limit SM                        block           24
+    Block Limit Registers                 block            3
+    Block Limit Shared Mem                block            3
+    Block Limit Warps                     block            6
+    Theoretical Active Warps per SM        warp           24
+    Theoretical Occupancy                     %           50
+    Achieved Occupancy                        %        49.23
+    Achieved Active Warps Per SM           warp        23.63
+    ------------------------------- ----------- ------------
+
+    OPT   Est. Local Speedup: 50%                                                                                       
+          The 6.00 theoretical warps per scheduler this kernel can issue according to its occupancy are below the       
+          hardware maximum of 12. This kernel's theoretical occupancy (50.0%) is limited by the number of required      
+          registers, and the required amount of shared memory.                                                          
+
+    Section: GPU and Memory Workload Distribution
+    -------------------------- ----------- ------------
+    Metric Name                Metric Unit Metric Value
+    -------------------------- ----------- ------------
+    Average DRAM Active Cycles       cycle 198811645.33
+    Total DRAM Elapsed Cycles        cycle   1380406272
+    Average L1 Active Cycles         cycle  29351601.69
+    Total L1 Elapsed Cycles          cycle   1732346902
+    Average L2 Active Cycles         cycle  30263643.29
+    Total L2 Elapsed Cycles          cycle    729467448
+    Average SM Active Cycles         cycle  29351601.69
+    Total SM Elapsed Cycles          cycle   1732346902
+    Average SMSP Active Cycles       cycle  29347498.93
+    Total SMSP Elapsed Cycles        cycle   6929387608
+    -------------------------- ----------- ------------
+
+  capacity(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+    Section: GPU Speed Of Light Throughput
+    ----------------------- ----------- ------------
+    Metric Name             Metric Unit Metric Value
+    ----------------------- ----------- ------------
+    DRAM Frequency                  Ghz         6.24
+    SM Frequency                    Mhz       808.20
+    Elapsed Cycles                cycle     30017517
+    Memory Throughput                 %        86.61
+    DRAM Throughput                   %        86.61
+    Duration                         ms        36.75
+    L1/TEX Cache Throughput           %        83.83
+    L2 Cache Throughput               %        33.03
+    SM Active Cycles              cycle  29395452.53
+    Compute (SM) Throughput           %        33.59
+    ----------------------- ----------- ------------
+
+    INF   This workload is utilizing greater than 80.0% of the available compute or memory performance of the device.   
+          To further improve performance, work will likely need to be shifted from the most utilized to another unit.   
+          Start by analyzing DRAM in the Memory Workload Analysis section.                                              
+
+    Section: Launch Statistics
+    -------------------------------- --------------- ---------------
+    Metric Name                          Metric Unit    Metric Value
+    -------------------------------- --------------- ---------------
+    Block Size                                                   256
+    Function Cache Configuration                     CachePreferNone
+    Grid Size                                                   2048
+    Registers Per Thread             register/thread              72
+    Shared Memory Configuration Size           Kbyte          102.40
+    Driver Shared Memory Per Block       Kbyte/block            1.02
+    Dynamic Shared Memory Per Block       byte/block               0
+    Static Shared Memory Per Block       Kbyte/block           33.02
+    # SMs                                         SM              58
+    Stack Size                                                  1024
+    Threads                                   thread          524288
+    # TPCs                                                        29
+    Enabled TPC IDs                                              all
+    Uses Green Context                                             0
+    Waves Per SM                                               11.77
+    -------------------------------- --------------- ---------------
+
+    Section: Occupancy
+    ------------------------------- ----------- ------------
+    Metric Name                     Metric Unit Metric Value
+    ------------------------------- ----------- ------------
+    Block Limit SM                        block           24
+    Block Limit Registers                 block            3
+    Block Limit Shared Mem                block            3
+    Block Limit Warps                     block            6
+    Theoretical Active Warps per SM        warp           24
+    Theoretical Occupancy                     %           50
+    Achieved Occupancy                        %        49.17
+    Achieved Active Warps Per SM           warp        23.60
+    ------------------------------- ----------- ------------
+
+    OPT   Est. Local Speedup: 50%                                                                                       
+          The 6.00 theoretical warps per scheduler this kernel can issue according to its occupancy are below the       
+          hardware maximum of 12. This kernel's theoretical occupancy (50.0%) is limited by the number of required      
+          registers, and the required amount of shared memory.                                                          
+
+    Section: GPU and Memory Workload Distribution
+    -------------------------- ----------- ------------
+    Metric Name                Metric Unit Metric Value
+    -------------------------- ----------- ------------
+    Average DRAM Active Cycles       cycle    198780304
+    Total DRAM Elapsed Cycles        cycle   1377007616
+    Average L1 Active Cycles         cycle  29395452.53
+    Total L1 Elapsed Cycles          cycle   1725143606
+    Average L2 Active Cycles         cycle  30266654.88
+    Total L2 Elapsed Cycles          cycle    727670688
+    Average SM Active Cycles         cycle  29395452.53
+    Total SM Elapsed Cycles          cycle   1725143606
+    Average SMSP Active Cycles       cycle  29390811.74
+    Total SMSP Elapsed Cycles        cycle   6900574424
+    -------------------------- ----------- ------------
+
+  capacity(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+    Section: GPU Speed Of Light Throughput
+    ----------------------- ----------- ------------
+    Metric Name             Metric Unit Metric Value
+    ----------------------- ----------- ------------
+    DRAM Frequency                  Ghz         6.24
+    SM Frequency                    Mhz       835.69
+    Elapsed Cycles                cycle     30691671
+    Memory Throughput                 %        87.42
+    DRAM Throughput                   %        87.42
+    Duration                         ms        36.36
+    L1/TEX Cache Throughput           %        82.38
+    L2 Cache Throughput               %        32.81
+    SM Active Cycles              cycle  29893038.48
+    Compute (SM) Throughput           %        32.88
+    ----------------------- ----------- ------------
+
+    INF   This workload is utilizing greater than 80.0% of the available compute or memory performance of the device.   
+          To further improve performance, work will likely need to be shifted from the most utilized to another unit.   
+          Start by analyzing DRAM in the Memory Workload Analysis section.                                              
+
+    Section: Launch Statistics
+    -------------------------------- --------------- ---------------
+    Metric Name                          Metric Unit    Metric Value
+    -------------------------------- --------------- ---------------
+    Block Size                                                   256
+    Function Cache Configuration                     CachePreferNone
+    Grid Size                                                   2048
+    Registers Per Thread             register/thread              72
+    Shared Memory Configuration Size           Kbyte          102.40
+    Driver Shared Memory Per Block       Kbyte/block            1.02
+    Dynamic Shared Memory Per Block       byte/block               0
+    Static Shared Memory Per Block       Kbyte/block           33.02
+    # SMs                                         SM              58
+    Stack Size                                                  1024
+    Threads                                   thread          524288
+    # TPCs                                                        29
+    Enabled TPC IDs                                              all
+    Uses Green Context                                             0
+    Waves Per SM                                               11.77
+    -------------------------------- --------------- ---------------
+
+    Section: Occupancy
+    ------------------------------- ----------- ------------
+    Metric Name                     Metric Unit Metric Value
+    ------------------------------- ----------- ------------
+    Block Limit SM                        block           24
+    Block Limit Registers                 block            3
+    Block Limit Shared Mem                block            3
+    Block Limit Warps                     block            6
+    Theoretical Active Warps per SM        warp           24
+    Theoretical Occupancy                     %           50
+    Achieved Occupancy                        %        49.22
+    Achieved Active Warps Per SM           warp        23.63
+    ------------------------------- ----------- ------------
+
+    OPT   Est. Local Speedup: 50%                                                                                       
+          The 6.00 theoretical warps per scheduler this kernel can issue according to its occupancy are below the       
+          hardware maximum of 12. This kernel's theoretical occupancy (50.0%) is limited by the number of required      
+          registers, and the required amount of shared memory.                                                          
+
+    Section: GPU and Memory Workload Distribution
+    -------------------------- ----------- ------------
+    Metric Name                Metric Unit Metric Value
+    -------------------------- ----------- ------------
+    Average DRAM Active Cycles       cycle 198475098.67
+    Total DRAM Elapsed Cycles        cycle   1362250752
+    Average L1 Active Cycles         cycle  29893038.48
+    Total L1 Elapsed Cycles          cycle   1762278034
+    Average L2 Active Cycles         cycle  30271435.50
+    Total L2 Elapsed Cycles          cycle    732831624
+    Average SM Active Cycles         cycle  29893038.48
+    Total SM Elapsed Cycles          cycle   1762278034
+    Average SMSP Active Cycles       cycle  29889322.36
+    Total SMSP Elapsed Cycles        cycle   7049112136
+    -------------------------- ----------- ------------
+
+  capacity(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+    Section: GPU Speed Of Light Throughput
+    ----------------------- ----------- ------------
+    Metric Name             Metric Unit Metric Value
+    ----------------------- ----------- ------------
+    DRAM Frequency                  Ghz         6.24
+    SM Frequency                    Mhz       810.10
+    Elapsed Cycles                cycle     30197399
+    Memory Throughput                 %        86.29
+    DRAM Throughput                   %        86.29
+    Duration                         ms        36.90
+    L1/TEX Cache Throughput           %        83.84
+    L2 Cache Throughput               %        32.95
+    SM Active Cycles              cycle  29392479.66
+    Compute (SM) Throughput           %        33.58
+    ----------------------- ----------- ------------
+
+    INF   This workload is utilizing greater than 80.0% of the available compute or memory performance of the device.   
+          To further improve performance, work will likely need to be shifted from the most utilized to another unit.   
+          Start by analyzing DRAM in the Memory Workload Analysis section.                                              
+
+    Section: Launch Statistics
+    -------------------------------- --------------- ---------------
+    Metric Name                          Metric Unit    Metric Value
+    -------------------------------- --------------- ---------------
+    Block Size                                                   256
+    Function Cache Configuration                     CachePreferNone
+    Grid Size                                                   2048
+    Registers Per Thread             register/thread              72
+    Shared Memory Configuration Size           Kbyte          102.40
+    Driver Shared Memory Per Block       Kbyte/block            1.02
+    Dynamic Shared Memory Per Block       byte/block               0
+    Static Shared Memory Per Block       Kbyte/block           33.02
+    # SMs                                         SM              58
+    Stack Size                                                  1024
+    Threads                                   thread          524288
+    # TPCs                                                        29
+    Enabled TPC IDs                                              all
+    Uses Green Context                                             0
+    Waves Per SM                                               11.77
+    -------------------------------- --------------- ---------------
+
+    Section: Occupancy
+    ------------------------------- ----------- ------------
+    Metric Name                     Metric Unit Metric Value
+    ------------------------------- ----------- ------------
+    Block Limit SM                        block           24
+    Block Limit Registers                 block            3
+    Block Limit Shared Mem                block            3
+    Block Limit Warps                     block            6
+    Theoretical Active Warps per SM        warp           24
+    Theoretical Occupancy                     %           50
+    Achieved Occupancy                        %        49.23
+    Achieved Active Warps Per SM           warp        23.63
+    ------------------------------- ----------- ------------
+
+    OPT   Est. Local Speedup: 50%                                                                                       
+          The 6.00 theoretical warps per scheduler this kernel can issue according to its occupancy are below the       
+          hardware maximum of 12. This kernel's theoretical occupancy (50.0%) is limited by the number of required      
+          registers, and the required amount of shared memory.                                                          
+
+    Section: GPU and Memory Workload Distribution
+    -------------------------- ----------- ------------
+    Metric Name                Metric Unit Metric Value
+    -------------------------- ----------- ------------
+    Average DRAM Active Cycles       cycle 198852765.33
+    Total DRAM Elapsed Cycles        cycle   1382622208
+    Average L1 Active Cycles         cycle  29392479.66
+    Total L1 Elapsed Cycles          cycle   1725413556
+    Average L2 Active Cycles         cycle  30200382.17
+    Total L2 Elapsed Cycles          cycle    730638456
+    Average SM Active Cycles         cycle  29392479.66
+    Total SM Elapsed Cycles          cycle   1725413556
+    Average SMSP Active Cycles       cycle  29389239.84
+    Total SMSP Elapsed Cycles        cycle   6901654224
+    -------------------------- ----------- ------------
+
+  capacity(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+    Section: GPU Speed Of Light Throughput
+    ----------------------- ----------- ------------
+    Metric Name             Metric Unit Metric Value
+    ----------------------- ----------- ------------
+    DRAM Frequency                  Ghz         6.24
+    SM Frequency                    Mhz       809.43
+    Elapsed Cycles                cycle     30252365
+    Memory Throughput                 %        86.05
+    DRAM Throughput                   %        86.05
+    Duration                         ms        37.01
+    L1/TEX Cache Throughput           %        83.86
+    L2 Cache Throughput               %        32.84
+    SM Active Cycles              cycle  29384125.02
+    Compute (SM) Throughput           %        33.40
+    ----------------------- ----------- ------------
+
+    INF   This workload is utilizing greater than 80.0% of the available compute or memory performance of the device.   
+          To further improve performance, work will likely need to be shifted from the most utilized to another unit.   
+          Start by analyzing DRAM in the Memory Workload Analysis section.                                              
+
+    Section: Launch Statistics
+    -------------------------------- --------------- ---------------
+    Metric Name                          Metric Unit    Metric Value
+    -------------------------------- --------------- ---------------
+    Block Size                                                   256
+    Function Cache Configuration                     CachePreferNone
+    Grid Size                                                   2048
+    Registers Per Thread             register/thread              72
+    Shared Memory Configuration Size           Kbyte          102.40
+    Driver Shared Memory Per Block       Kbyte/block            1.02
+    Dynamic Shared Memory Per Block       byte/block               0
+    Static Shared Memory Per Block       Kbyte/block           33.02
+    # SMs                                         SM              58
+    Stack Size                                                  1024
+    Threads                                   thread          524288
+    # TPCs                                                        29
+    Enabled TPC IDs                                              all
+    Uses Green Context                                             0
+    Waves Per SM                                               11.77
+    -------------------------------- --------------- ---------------
+
+    Section: Occupancy
+    ------------------------------- ----------- ------------
+    Metric Name                     Metric Unit Metric Value
+    ------------------------------- ----------- ------------
+    Block Limit SM                        block           24
+    Block Limit Registers                 block            3
+    Block Limit Shared Mem                block            3
+    Block Limit Warps                     block            6
+    Theoretical Active Warps per SM        warp           24
+    Theoretical Occupancy                     %           50
+    Achieved Occupancy                        %        49.21
+    Achieved Active Warps Per SM           warp        23.62
+    ------------------------------- ----------- ------------
+
+    OPT   Est. Local Speedup: 50%                                                                                       
+          The 6.00 theoretical warps per scheduler this kernel can issue according to its occupancy are below the       
+          hardware maximum of 12. This kernel's theoretical occupancy (50.0%) is limited by the number of required      
+          registers, and the required amount of shared memory.                                                          
+
+    Section: GPU and Memory Workload Distribution
+    -------------------------- ----------- ------------
+    Metric Name                Metric Unit Metric Value
+    -------------------------- ----------- ------------
+    Average DRAM Active Cycles       cycle 198884450.67
+    Total DRAM Elapsed Cycles        cycle   1386791936
+    Average L1 Active Cycles         cycle  29384125.02
+    Total L1 Elapsed Cycles          cycle   1734920676
+    Average L2 Active Cycles         cycle  30219466.58
+    Total L2 Elapsed Cycles          cycle    732841152
+    Average SM Active Cycles         cycle  29384125.02
+    Total SM Elapsed Cycles          cycle   1734920676
+    Average SMSP Active Cycles       cycle  29378060.27
+    Total SMSP Elapsed Cycles        cycle   6939682704
+    -------------------------- ----------- ------------
+
+  capacity(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+    Section: GPU Speed Of Light Throughput
+    ----------------------- ----------- ------------
+    Metric Name             Metric Unit Metric Value
+    ----------------------- ----------- ------------
+    DRAM Frequency                  Ghz         6.24
+    SM Frequency                    Mhz       809.33
+    Elapsed Cycles                cycle     30102328
+    Memory Throughput                 %        86.46
+    DRAM Throughput                   %        86.46
+    Duration                         ms        36.83
+    L1/TEX Cache Throughput           %        83.83
+    L2 Cache Throughput               %        33.02
+    SM Active Cycles              cycle  29396820.69
+    Compute (SM) Throughput           %        33.65
+    ----------------------- ----------- ------------
+
+    INF   This workload is utilizing greater than 80.0% of the available compute or memory performance of the device.   
+          To further improve performance, work will likely need to be shifted from the most utilized to another unit.   
+          Start by analyzing DRAM in the Memory Workload Analysis section.                                              
+
+    Section: Launch Statistics
+    -------------------------------- --------------- ---------------
+    Metric Name                          Metric Unit    Metric Value
+    -------------------------------- --------------- ---------------
+    Block Size                                                   256
+    Function Cache Configuration                     CachePreferNone
+    Grid Size                                                   2048
+    Registers Per Thread             register/thread              72
+    Shared Memory Configuration Size           Kbyte          102.40
+    Driver Shared Memory Per Block       Kbyte/block            1.02
+    Dynamic Shared Memory Per Block       byte/block               0
+    Static Shared Memory Per Block       Kbyte/block           33.02
+    # SMs                                         SM              58
+    Stack Size                                                  1024
+    Threads                                   thread          524288
+    # TPCs                                                        29
+    Enabled TPC IDs                                              all
+    Uses Green Context                                             0
+    Waves Per SM                                               11.77
+    -------------------------------- --------------- ---------------
+
+    Section: Occupancy
+    ------------------------------- ----------- ------------
+    Metric Name                     Metric Unit Metric Value
+    ------------------------------- ----------- ------------
+    Block Limit SM                        block           24
+    Block Limit Registers                 block            3
+    Block Limit Shared Mem                block            3
+    Block Limit Warps                     block            6
+    Theoretical Active Warps per SM        warp           24
+    Theoretical Occupancy                     %           50
+    Achieved Occupancy                        %        49.22
+    Achieved Active Warps Per SM           warp        23.62
+    ------------------------------- ----------- ------------
+
+    OPT   Est. Local Speedup: 50%                                                                                       
+          The 6.00 theoretical warps per scheduler this kernel can issue according to its occupancy are below the       
+          hardware maximum of 12. This kernel's theoretical occupancy (50.0%) is limited by the number of required      
+          registers, and the required amount of shared memory.                                                          
+
+    Section: GPU and Memory Workload Distribution
+    -------------------------- ----------- ------------
+    Metric Name                Metric Unit Metric Value
+    -------------------------- ----------- ------------
+    Average DRAM Active Cycles       cycle    198879632
+    Total DRAM Elapsed Cycles        cycle   1380113408
+    Average L1 Active Cycles         cycle  29396820.69
+    Total L1 Elapsed Cycles          cycle   1721863846
+    Average L2 Active Cycles         cycle     30240100
+    Total L2 Elapsed Cycles          cycle    729312432
+    Average SM Active Cycles         cycle  29396820.69
+    Total SM Elapsed Cycles          cycle   1721863846
+    Average SMSP Active Cycles       cycle  29392839.12
+    Total SMSP Elapsed Cycles        cycle   6887455384
+    -------------------------- ----------- ------------
+
+  capacity(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+    Section: GPU Speed Of Light Throughput
+    ----------------------- ----------- ------------
+    Metric Name             Metric Unit Metric Value
+    ----------------------- ----------- ------------
+    DRAM Frequency                  Ghz         6.24
+    SM Frequency                    Mhz       829.17
+    Elapsed Cycles                cycle     30521321
+    Memory Throughput                 %        87.16
+    DRAM Throughput                   %        87.16
+    Duration                         ms        36.45
+    L1/TEX Cache Throughput           %        82.69
+    L2 Cache Throughput               %        33.02
+    SM Active Cycles              cycle  29789608.38
+    Compute (SM) Throughput           %        32.90
+    ----------------------- ----------- ------------
+
+    INF   This workload is utilizing greater than 80.0% of the available compute or memory performance of the device.   
+          To further improve performance, work will likely need to be shifted from the most utilized to another unit.   
+          Start by analyzing DRAM in the Memory Workload Analysis section.                                              
+
+    Section: Launch Statistics
+    -------------------------------- --------------- ---------------
+    Metric Name                          Metric Unit    Metric Value
+    -------------------------------- --------------- ---------------
+    Block Size                                                   256
+    Function Cache Configuration                     CachePreferNone
+    Grid Size                                                   2048
+    Registers Per Thread             register/thread              72
+    Shared Memory Configuration Size           Kbyte          102.40
+    Driver Shared Memory Per Block       Kbyte/block            1.02
+    Dynamic Shared Memory Per Block       byte/block               0
+    Static Shared Memory Per Block       Kbyte/block           33.02
+    # SMs                                         SM              58
+    Stack Size                                                  1024
+    Threads                                   thread          524288
+    # TPCs                                                        29
+    Enabled TPC IDs                                              all
+    Uses Green Context                                             0
+    Waves Per SM                                               11.77
+    -------------------------------- --------------- ---------------
+
+    Section: Occupancy
+    ------------------------------- ----------- ------------
+    Metric Name                     Metric Unit Metric Value
+    ------------------------------- ----------- ------------
+    Block Limit SM                        block           24
+    Block Limit Registers                 block            3
+    Block Limit Shared Mem                block            3
+    Block Limit Warps                     block            6
+    Theoretical Active Warps per SM        warp           24
+    Theoretical Occupancy                     %           50
+    Achieved Occupancy                        %        49.20
+    Achieved Active Warps Per SM           warp        23.62
+    ------------------------------- ----------- ------------
+
+    OPT   Est. Local Speedup: 50%                                                                                       
+          The 6.00 theoretical warps per scheduler this kernel can issue according to its occupancy are below the       
+          hardware maximum of 12. This kernel's theoretical occupancy (50.0%) is limited by the number of required      
+          registers, and the required amount of shared memory.                                                          
+
+    Section: GPU and Memory Workload Distribution
+    -------------------------- ----------- ------------
+    Metric Name                Metric Unit Metric Value
+    -------------------------- ----------- ------------
+    Average DRAM Active Cycles       cycle 198386669.33
+    Total DRAM Elapsed Cycles        cycle   1365680128
+    Average L1 Active Cycles         cycle  29789608.38
+    Total L1 Elapsed Cycles          cycle   1761042150
+    Average L2 Active Cycles         cycle  30177724.38
+    Total L2 Elapsed Cycles          cycle    728749584
+    Average SM Active Cycles         cycle  29789608.38
+    Total SM Elapsed Cycles          cycle   1761042150
+    Average SMSP Active Cycles       cycle  29786270.90
+    Total SMSP Elapsed Cycles        cycle   7044168600
+    -------------------------- ----------- ------------
+

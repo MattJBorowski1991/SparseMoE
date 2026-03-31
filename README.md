@@ -8,11 +8,11 @@ Implementation of a sparse Mixture-of-Experts CUDA workflow. The repository cont
 
 | TC | Tile | Int8 | CAP | Kernel | ms | Profile | Setup | Notes |
 |----|----|----|-------|--------|-----------|---------|-------|-------|
-| Yes | 16×16×16 | No | No | [unfused](kernels/unfused.cu) | 2780 | [Run 1](prof/md/run1/ncu_details.md) | per-stage separate global kernels | overalloc of per-expert buffers |
-| Yes | 16×16×16 | No | No | [baseline](kernels/baseline.cu) | 85.6 | [Run 1](prof/md/run1/ncu_details.md) | full kernel fusion with per-token routing  | as above  |
-| Yes | 16×16×16 | No | Yes  | [capacity](kernels/capacity.cu) | 61 | [Run 1](prof/md/run1/ncu_details.md) | capacity-aware routing |  |
-| Yes | 16×16×16 | No | Yes | [capacity_v2](kernels/capacity_v2.cu) | 74 | [Run 2](prof/md/run2/ncu_details.md) | XOR swizzle |  |
-| Yes | 16×16×16 | Yes | Yes | [capacity_v3](kernels/capacity_v3.cu) | 71.2 | [Run 3](prof/md/run3/ncu_details.md) | swizzle via ldmatrix  | more PTX |
+| Yes | 16×16×16 | No | No | [unfused](kernels/unfused.cu) | 2034 | [Run 1](prof/md/run1/ncu_details.md) | per-stage separate global kernels | overalloc of per-expert buffers |
+| Yes | 16×16×16 | No | No | [baseline](kernels/baseline.cu) | 54 | [Run 1](prof/md/run1/ncu_details.md) | full kernel fusion with per-token routing  | as above  |
+| Yes | 16×16×16 | No | Yes  | [capacity](kernels/capacity.cu) | 37 | [Run 1](prof/md/run1/ncu_details.md) | capacity-aware routing |  |
+| Yes | 16×16×16 | No | Yes | [capacity_v2](kernels/capacity_v2.cu) | 70 | [Run 2](prof/md/run2/ncu_details.md) | XOR swizzle |  |
+| Yes | 16×16×16 | Yes | Yes | [capacity_v3](kernels/capacity_v3.cu) | 45.5 | [Run 3](prof/md/run3/ncu_details.md) | swizzle via ldmatrix  | more PTX |
 
 
 ## TL;DR
