@@ -32,7 +32,7 @@ The estimated speedups for main bottlenecks changed compared to `capacity.cu`:
 
 ### Throughput
 
-Compute throughput increased by ~103%, but kernel duration still worsened (~+90%) because:
+Compute throughput increased by 103%, but kernel duration still worsened (+90%) because:
 
 - Overall memory throughput dropped to ~68% of peak.
 - DRAM throughput dropped to ~61% of peak.
@@ -40,7 +40,7 @@ Compute throughput increased by ~103%, but kernel duration still worsened (~+90%
 
 ![Capacity_v2 - Throughput](../../images/run3/capacity_v2_throughput.jpg)
 
-![Capacity_v2 - Throughput %](../../images/run3/capacity_v2_throughput_%.jpg)
+![Capacity_v2 - Throughput %](../../images/run3/capacity_v2_throughput_p.jpg)
 
 ### Roofline
 

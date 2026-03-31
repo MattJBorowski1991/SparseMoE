@@ -25,15 +25,7 @@ $row = \left\lfloor \frac{i}{16} \right\rfloor = \left\lfloor \frac{l}{2} \right
 
 $col = i \bmod 16 = (8l) \bmod 16 \in \{0,8\}$
 
-Define a chunk selector:
-
-$col_{chunk} = l \bmod 2$
-
-Then:
-
-$col = 8 \cdot col_{chunk}$
-
-Interpretation: each lane writes one 16-byte chunk (8 half elements) at row $\left\lfloor l/2 \right\rfloor$ and chunk $l \bmod 2$.
+Interpretation: each lane writes one 16-byte segment (8 half elements) into either columns 0 to 7 or columns 8 to 15 of row $\left\lfloor l/2 \right\rfloor$. Even lanes write the first half of the row and odd lanes write the second half.
 
 ### 2. Shared-memory bank index
 
@@ -41,52 +33,64 @@ With half precision (2 bytes per element), byte address inside the tile is:
 
 $addr_{bytes} = 2 \cdot (16 \cdot row + col)$
 
-Substitute $col = 8 \cdot col_{chunk}$:
+Since $col \in \{0,8\}$, this becomes:
 
-$addr_{bytes} = 32 \cdot row + 16 \cdot col_{chunk}$
+- even lanes: $addr_{bytes} = 32 \cdot row$
+- odd lanes: $addr_{bytes} = 32 \cdot row + 16$
 
 With 4-byte bank granularity and 32 banks:
 
-$bank = \left\lfloor \frac{addr_{bytes}}{4} \right\rfloor \bmod 32 = (8 \cdot row + 4 \cdot col_{chunk}) \bmod 32$
+$bank = \left\lfloor \frac{addr_{bytes}}{4} \right\rfloor \bmod 32$
 
-This is the bank-start formula for the 16-byte lane chunk.
+So the starting bank is:
+
+- even lanes: $bank = (8 \cdot row) \bmod 32$
+- odd lanes: $bank = (8 \cdot row + 4) \bmod 32$
+
+Because each lane writes 16 bytes and each bank is 4 bytes wide, one lane touches four consecutive banks starting from that bank index.
 
 ### 3. Why collision groups repeat every 8 lanes
 
 Compare lane $l$ and lane $l+8$:
 
-- $col_{chunk}$ is unchanged (same parity)
+- lane parity is unchanged, so both lanes target the same half-row
 - $row$ increases by 4
 
 So the bank shift is:
 
-$8 \cdot (row+4) + 4 \cdot col_{chunk} = (8 \cdot row + 4 \cdot col_{chunk}) + 32$
+$(8 \cdot (row+4)) \bmod 32 = (8 \cdot row + 32) \bmod 32 = (8 \cdot row) \bmod 32$
 
-Modulo 32, that is identical. Therefore lanes in the set below map to the same bank pattern:
+and similarly for odd lanes:
+
+$(8 \cdot (row+4) + 4) \bmod 32 = (8 \cdot row + 36) \bmod 32 = (8 \cdot row + 4) \bmod 32$
+
+Therefore lanes in the set below map to the same starting bank and the same four-bank span:
 
 $\{l, l+8, l+16, l+24\}$
+
+When multiple lanes in one warp hit the same banks in the same instruction, those accesses are replayed/serialized instead of being served fully in parallel.
 
 ### 4. Concrete examples
 
 Example A:
 
-- Lane 0: $row=0$, $col_{chunk}=0$, $bank=(8\cdot0+4\cdot0)\bmod32=0$
-- Lane 8: $row=4$, $col_{chunk}=0$, $bank=(8\cdot4+0)\bmod32=0$
-- Lane 16: $row=8$, $col_{chunk}=0$, $bank=64\bmod32=0$
-- Lane 24: $row=12$, $col_{chunk}=0$, $bank=96\bmod32=0$
+- Lane 0: $row=0$, $col=0$, starts at bank $0$
+- Lane 8: $row=4$, $col=0$, starts at bank $0$
+- Lane 16: $row=8$, $col=0$, starts at bank $0$
+- Lane 24: $row=12$, $col=0$, starts at bank $0$
+
+Each of these lanes writes 16 bytes, so they all touch banks 0 to 3.
 
 Example B:
 
-- Lane 1: $row=0$, $col_{chunk}=1$, $bank=(0+4)\bmod32=4$
-- Lane 9: $row=4$, $col_{chunk}=1$, $bank=(32+4)\bmod32=4$
-- Lane 17: $row=8$, $col_{chunk}=1$, $bank=(64+4)\bmod32=4$
-- Lane 25: $row=12$, $col_{chunk}=1$, $bank=(96+4)\bmod32=4$
+- Lane 1: $row=0$, $col=8$, starts at bank $4$
+- Lane 9: $row=4$, $col=8$, starts at bank $4$
+- Lane 17: $row=8$, $col=8$, starts at bank $4$
+- Lane 25: $row=12$, $col=8$, starts at bank $4$
 
-These repeated groups are the structural reason conflicts recur unless layout mapping is changed.
+Each of these lanes writes 16 bytes, so they all touch banks 4 to 7.
 
-### 5. Practical swizzle implication
-
-The swizzle should be designed from this exact lane to bank mapping, and validated at the consumer side as well (for example, shared-memory loads used by matrix instructions). A swizzle that improves producer mapping but adds extra shared-memory traffic or an unswizzle pass can still lose overall runtime.
+These repeated groups are the structural reason the same bank conflicts recur in the current layout.
 
 
 
