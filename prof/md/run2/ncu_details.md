@@ -9,6 +9,87 @@ This report summarizes the two applications of swizzling below and compares them
 
 Both swizzling approaches / thread mapping permutations were applied at 16-byte chunk granularity to match the `cp.async` transaction size and reduce bookkeeping overhead. The aim of this file is to document and explain why neither of the applications yielded performance improvement.
 
+## Current thread mapping - how the bank conflicts occur
+
+This section derives the current shared-memory access pattern in the base kernel and shows why recurring bank-collision groups appear.
+
+### 1. Lane to tile coordinates
+
+In the staging loop, each lane starts from:
+
+$i = 8 \cdot l$, where $l \in [0,31]$ is the lane id.
+
+For a $16 \times 16$ tile:
+
+$row = \left\lfloor \frac{i}{16} \right\rfloor = \left\lfloor \frac{l}{2} \right\rfloor$
+
+$col = i \bmod 16 = (8l) \bmod 16 \in \{0,8\}$
+
+Define a chunk selector:
+
+$col_{chunk} = l \bmod 2$
+
+Then:
+
+$col = 8 \cdot col_{chunk}$
+
+Interpretation: each lane writes one 16-byte chunk (8 half elements) at row $\left\lfloor l/2 \right\rfloor$ and chunk $l \bmod 2$.
+
+### 2. Shared-memory bank index
+
+With half precision (2 bytes per element), byte address inside the tile is:
+
+$addr_{bytes} = 2 \cdot (16 \cdot row + col)$
+
+Substitute $col = 8 \cdot col_{chunk}$:
+
+$addr_{bytes} = 32 \cdot row + 16 \cdot col_{chunk}$
+
+With 4-byte bank granularity and 32 banks:
+
+$bank = \left\lfloor \frac{addr_{bytes}}{4} \right\rfloor \bmod 32 = (8 \cdot row + 4 \cdot col_{chunk}) \bmod 32$
+
+This is the bank-start formula for the 16-byte lane chunk.
+
+### 3. Why collision groups repeat every 8 lanes
+
+Compare lane $l$ and lane $l+8$:
+
+- $col_{chunk}$ is unchanged (same parity)
+- $row$ increases by 4
+
+So the bank shift is:
+
+$8 \cdot (row+4) + 4 \cdot col_{chunk} = (8 \cdot row + 4 \cdot col_{chunk}) + 32$
+
+Modulo 32, that is identical. Therefore lanes in the set below map to the same bank pattern:
+
+$\{l, l+8, l+16, l+24\}$
+
+### 4. Concrete examples
+
+Example A:
+
+- Lane 0: $row=0$, $col_{chunk}=0$, $bank=(8\cdot0+4\cdot0)\bmod32=0$
+- Lane 8: $row=4$, $col_{chunk}=0$, $bank=(8\cdot4+0)\bmod32=0$
+- Lane 16: $row=8$, $col_{chunk}=0$, $bank=64\bmod32=0$
+- Lane 24: $row=12$, $col_{chunk}=0$, $bank=96\bmod32=0$
+
+Example B:
+
+- Lane 1: $row=0$, $col_{chunk}=1$, $bank=(0+4)\bmod32=4$
+- Lane 9: $row=4$, $col_{chunk}=1$, $bank=(32+4)\bmod32=4$
+- Lane 17: $row=8$, $col_{chunk}=1$, $bank=(64+4)\bmod32=4$
+- Lane 25: $row=12$, $col_{chunk}=1$, $bank=(96+4)\bmod32=4$
+
+These repeated groups are the structural reason conflicts recur unless layout mapping is changed.
+
+### 5. Practical swizzle implication
+
+The swizzle should be designed from this exact lane to bank mapping, and validated at the consumer side as well (for example, shared-memory loads used by matrix instructions). A swizzle that improves producer mapping but adds extra shared-memory traffic or an unswizzle pass can still lose overall runtime.
+
+
+
 ## XOR swizzle
 
 ```cpp
