@@ -27,6 +27,36 @@ $col = i \bmod 16 = (8l) \bmod 16 \in \{0,8\}$
 
 Interpretation: each lane writes one 16-byte segment (8 half elements) into either columns 0 to 7 or columns 8 to 15 of row $\left\lfloor l/2 \right\rfloor$. Even lanes write the first half of the row and odd lanes write the second half.
 
+Exact mapping for the current kernel:
+
+- Lane 0 $\rightarrow$ $(row, col) = (0, 0)$
+- Lane 1 $\rightarrow$ $(row, col) = (0, 8)$
+- Lane 2 $\rightarrow$ $(row, col) = (1, 0)$
+- Lane 3 $\rightarrow$ $(row, col) = (1, 8)$
+- Lane 4 $\rightarrow$ $(row, col) = (2, 0)$
+- Lane 5 $\rightarrow$ $(row, col) = (2, 8)$
+- Lane 6 $\rightarrow$ $(row, col) = (3, 0)$
+- Lane 7 $\rightarrow$ $(row, col) = (3, 8)$
+- Lane 8 $\rightarrow$ $(row, col) = (4, 0)$
+- Lane 9 $\rightarrow$ $(row, col) = (4, 8)$
+- Lane 10 $\rightarrow$ $(row, col) = (5, 0)$
+- Lane 11 $\rightarrow$ $(row, col) = (5, 8)$
+- Lane 12 $\rightarrow$ $(row, col) = (6, 0)$
+- Lane 13 $\rightarrow$ $(row, col) = (6, 8)$
+- Lane 14 $\rightarrow$ $(row, col) = (7, 0)$
+- Lane 15 $\rightarrow$ $(row, col) = (7, 8)$
+
+The same pattern continues for lanes 16 to 31:
+
+- Lane 16 $\rightarrow$ $(8, 0)$, Lane 17 $\rightarrow$ $(8, 8)$
+- Lane 18 $\rightarrow$ $(9, 0)$, Lane 19 $\rightarrow$ $(9, 8)$
+- Lane 20 $\rightarrow$ $(10, 0)$, Lane 21 $\rightarrow$ $(10, 8)$
+- Lane 22 $\rightarrow$ $(11, 0)$, Lane 23 $\rightarrow$ $(11, 8)$
+- Lane 24 $\rightarrow$ $(12, 0)$, Lane 25 $\rightarrow$ $(12, 8)$
+- Lane 26 $\rightarrow$ $(13, 0)$, Lane 27 $\rightarrow$ $(13, 8)$
+- Lane 28 $\rightarrow$ $(14, 0)$, Lane 29 $\rightarrow$ $(14, 8)$
+- Lane 30 $\rightarrow$ $(15, 0)$, Lane 31 $\rightarrow$ $(15, 8)$
+
 ### 2. Shared-memory bank index
 
 With half precision (2 bytes per element), byte address inside the tile is:
@@ -49,6 +79,20 @@ So the starting bank is:
 
 Because each lane writes 16 bytes and each bank is 4 bytes wide, one lane touches four consecutive banks starting from that bank index.
 
+Exact examples for the current kernel:
+
+- Lane 0: $(row, col) = (0, 0)$, $addr_{bytes} = 2 \cdot (16 \cdot 0 + 0) = 0$, start bank $= 0$, banks touched $= 0$ to $3$
+- Lane 1: $(row, col) = (0, 8)$, $addr_{bytes} = 2 \cdot (16 \cdot 0 + 8) = 16$, start bank $= 4$, banks touched $= 4$ to $7$
+- Lane 2: $(row, col) = (1, 0)$, $addr_{bytes} = 32$, start bank $= 8$, banks touched $= 8$ to $11$
+- Lane 3: $(row, col) = (1, 8)$, $addr_{bytes} = 48$, start bank $= 12$, banks touched $= 12$ to $15$
+- Lane 4: $(row, col) = (2, 0)$, $addr_{bytes} = 64$, start bank $= 16$, banks touched $= 16$ to $19$
+- Lane 5: $(row, col) = (2, 8)$, $addr_{bytes} = 80$, start bank $= 20$, banks touched $= 20$ to $23$
+- Lane 6: $(row, col) = (3, 0)$, $addr_{bytes} = 96$, start bank $= 24$, banks touched $= 24$ to $27$
+- Lane 7: $(row, col) = (3, 8)$, $addr_{bytes} = 112$, start bank $= 28$, banks touched $= 28$ to $31$
+- Lane 8: $(row, col) = (4, 0)$, $addr_{bytes} = 128$, start bank $= 0$, banks touched $= 0$ to $3$
+
+This already shows the wraparound: lane 8 returns to the same bank span as lane 0.
+
 ### 3. Why collision groups repeat every 8 lanes
 
 Compare lane $l$ and lane $l+8$:
@@ -69,6 +113,19 @@ Therefore lanes in the set below map to the same starting bank and the same four
 $\{l, l+8, l+16, l+24\}$
 
 When multiple lanes in one warp hit the same banks in the same instruction, those accesses are replayed/serialized instead of being served fully in parallel.
+
+Exact collision groups in the current kernel:
+
+- Lanes $\{0, 8, 16, 24\}$ all hit banks $0$ to $3$
+- Lanes $\{1, 9, 17, 25\}$ all hit banks $4$ to $7$
+- Lanes $\{2, 10, 18, 26\}$ all hit banks $8$ to $11$
+- Lanes $\{3, 11, 19, 27\}$ all hit banks $12$ to $15$
+- Lanes $\{4, 12, 20, 28\}$ all hit banks $16$ to $19$
+- Lanes $\{5, 13, 21, 29\}$ all hit banks $20$ to $23$
+- Lanes $\{6, 14, 22, 30\}$ all hit banks $24$ to $27$
+- Lanes $\{7, 15, 23, 31\}$ all hit banks $28$ to $31$
+
+So the current mapping creates eight recurring 4-lane collision groups across the warp.
 
 ### 4. Concrete examples
 
