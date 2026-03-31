@@ -4,7 +4,7 @@
 
  Overview
  --------
-This report summarizes high level profiling outputs for: [unfused.cu](kernels/unfused.cu), [baseline.cu](kernels/baseline.cu) and [capacity.cu](kernels/capacity.cu). The [unfused.cu](kernels/unfused.cu) variant produces separate kernel traces and is not included in the aggregated tables below. The timings reported for the three workflows ([unfused.cu](kernels/unfused.cu), [baseline.cu](kernels/baseline.cu), and [capacity.cu](kernels/capacity.cu)) use a small configuration — larger configurations cause the device to run out of memory for the [unfused.cu](kernels/unfused.cu) variant.
+This report summarizes high level profiling outputs for: [unfused.cu](kernels/unfused.cu), [baseline.cu](kernels/baseline.cu) and [capacity.cu](kernels/capacity.cu). The timings reported for the three workflows ([unfused.cu](kernels/unfused.cu), [baseline.cu](kernels/baseline.cu), and [capacity.cu](kernels/capacity.cu)) use a small configuration — larger configurations cause the device to run out of memory for the [unfused.cu](kernels/unfused.cu) variant. Larger configurations will be used subsequently for next profilins runs.
 
  Configuration
  -------------
@@ -28,6 +28,8 @@ Observations
 - **Per‑Expert Allocation:** Capacity-aware buffer sizing materially improves performance compared with naive over-allocation — the `capacity` variant shows roughly **+40%** speedup versus `baseline` under this configuration.
 - **Primary Hotspots:** WMMA `up_proj` and `down_proj` kernels dominate the unfused runtime and should be the first optimization targets.
 - **Memory vs Compute:** The `baseline` variant exhibits DRAM-bound behavior; the `capacity` variant shifts the workload toward better compute utilization.
+
+The [unfused.cu](kernels/unfused.cu) variant produces separate kernel traces and is not included in the aggregated tables below.
 
 ## GPU Speed Of Light Throughput
 
@@ -117,17 +119,17 @@ Observations
 
 This section presents a focused analysis of Nsight Compute results for [capacity.cu](kernels/capacity.cu). It highlights the primary bottlenecks, the source-level causes identified by the profiler, and concise recommendations for targeted fixes. For broader comparisons and additional detail see Run 2 and Run 3.
 
-![Capacity - Bottlenecks](../../images/run1/capacity_bottlenecks.png)
+![Capacity - Bottlenecks](../../images/run1/capacity_bottlenecks.jpg)
 
 Root cause summary
 ------------------
 - The dominant contributors to the observed bottlenecks are the explicit DRAM→shared-memory copy operations for matrices `A` and `B`, implemented with PTX `cp.async.ca.shared.global` instructions. These copies appear as the primary sources of uncoalesced accesses.
 
-![Capacity - Source Code - Uncoalesced 1](../../images/run1/capacity_source_code_uncoalesced_shared_access_1.png)
+![Capacity - Source Code - Uncoalesced 1](../../images/run1/capacity_source_code_uncoalesced_shared_access_1.jpg)
 
 - Additional uncoalesced/shared-access events are attributed to the WMMA load path (`wmma::load_matrix_sync`). Nsight Compute reports these indirectly (via `mma.hpp`/NVidia headers), so the profiler maps them to the helper headers rather than the user source file.
 
-![Capacity - Source Code - Uncoalesced 2](../../images/run1/capacity_source_code_uncoalesced_shared_access_2.png)
+![Capacity - Source Code - Uncoalesced 2](../../images/run1/capacity_source_code_uncoalesced_shared_access_2.jpg)
 
 Synchronization issue
 ---------------------
