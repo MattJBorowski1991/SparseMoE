@@ -1,7 +1,5 @@
  # Run 1 — Nsight Compute: Summary
 
- **Date:** 2026-03-30
-
  Overview
  --------
 This report summarizes high level profiling outputs for: [unfused.cu](kernels/unfused.cu), [baseline.cu](kernels/baseline.cu) and [capacity.cu](kernels/capacity.cu). The timings reported for the three workflows ([unfused.cu](kernels/unfused.cu), [baseline.cu](kernels/baseline.cu), and [capacity.cu](kernels/capacity.cu)) use a small configuration — larger configurations cause the device to run out of memory for the [unfused.cu](kernels/unfused.cu) variant. Larger configurations will be used subsequently for next profilins runs.
@@ -117,7 +115,7 @@ The [unfused.cu](kernels/unfused.cu) variant produces separate kernel traces and
 
 ## Selective Nsight Compute Analysis — `capacity.cu`
 
-This section presents a focused analysis of Nsight Compute results for [capacity.cu](kernels/capacity.cu). It highlights the primary bottlenecks, the source-level causes identified by the profiler, and concise recommendations for targeted fixes. For broader comparisons and additional detail see Run 2 and Run 3.
+This section presents a focused analysis of Nsight Compute results for [capacity.cu](kernels/capacity.cu). It highlights the primary bottlenecks, the source-level causes identified by the profiler, and concise recommendations for targeted fixes. For broader comparisons and additional detail see [Run 2](prof/md/run2/ncu_details.md) and [Run 3](prof/md/run3/ncu_details.md).
 
 ![Capacity - Bottlenecks](../../images/run1/capacity_bottlenecks.jpg)
 
@@ -135,6 +133,6 @@ Synchronization issue
 ---------------------
 - The `__syncthreads()` barrier present after the `cp.async` sequence contributes heavily to warp stalls (profile reports ~58% of stalls). It appears unnecessary because each warp writes into its own warp-indexed shared buffer slot and `cp.async.wait_group 0` already establishes the required ordering for that warp's async copies. Removing this redundant barrier will reduce warp stalls without changing correctness when the per-warp buffer convention is preserved.
 
-![Capacity - Source Code - syncthreads after wait_group 0](../../images/run1/capacity_source_code_syncthreads_after_commit_group_wait_group.png)
+![Capacity - Source Code - syncthreads after wait_group 0](../../images/run1/capacity_source_code_syncthreads_after_commit_group_wait_group.jpg)
 
 
