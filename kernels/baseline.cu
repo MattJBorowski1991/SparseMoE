@@ -140,7 +140,8 @@ static __device__ __forceinline__ void wmma_db(
 }
 
 static __device__ __forceinline__ void fp32_to_fp16(
-    const float* __restrict__ input,        // hidden_mlp_layer_1_out
+    const float* __restrict__ up_input,     // hidden_mlp_layer_1_out
+    const float* __restrict__ gate_input,   // hidden_mlp_gate_out
     half* __restrict__ output,              // hidden_mlp_layer_1_out_fp16
     int rows_per_expert                      // rows per expert (N or CAP)
 ){  
@@ -149,7 +150,8 @@ static __device__ __forceinline__ void fp32_to_fp16(
     const int elems_per_expert = rows_per_expert * (up_proj_dim * d_model);
     const int total_size = num_experts * elems_per_expert;
 
-    const float* input_b = input + batch * total_size;
+    const float* up_input_b = up_input + batch * total_size;
+    const float* gate_input_b = gate_input + batch * total_size;
     half* output_b = output + batch * total_size;
 
     const int block_linear = blockIdx.y * gridDim.x + blockIdx.x;
@@ -157,7 +159,9 @@ static __device__ __forceinline__ void fp32_to_fp16(
     const int global_stride = gridDim.x * gridDim.y * blockDim.x;
 
     for (int idx = global_tid; idx < total_size; idx += global_stride) {
-        output_b[idx] = __float2half(input_b[idx]);
+        const float gate = gate_input_b[idx];
+        const float silu_gate = gate / (1.0f + __expf(-gate));
+        output_b[idx] = __float2half(up_input_b[idx] * silu_gate);
     }
 }
 
@@ -451,6 +455,7 @@ __global__ void baseline(MoEArgs args){
     // model weights
     const half* __restrict__ router_weights = args.router_weights;                     // [d_model, num_experts]
     const half* __restrict__ expert_up_proj_weights = args.expert_up_proj_weights;     // [num_experts, d_model, 4 * d_model]
+    const half* __restrict__ expert_gate_proj_weights = args.expert_gate_proj_weights; // [num_experts, d_model, 4 * d_model]
     const half* __restrict__ expert_down_proj_weights = args.expert_down_proj_weights; // [num_experts, 4 * d_model, d_model]
 
     //intermediate buffers, pre-allocated by host
@@ -463,6 +468,7 @@ __global__ void baseline(MoEArgs args){
     half* __restrict__ per_expert_wmma_inputs = args.per_expert_wmma_inputs;           // [num_experts, N, d_model]
 
     float* __restrict__ hidden_mlp_layer_1_out = args.hidden_mlp_layer_1_out;          // [num_experts, N, 4 * d_model]
+    float* __restrict__ hidden_mlp_gate_out = args.hidden_mlp_gate_out;                // [num_experts, N, 4 * d_model]
     half* __restrict__ hidden_mlp_layer_1_out_fp16 = args.hidden_mlp_layer_1_out_fp16; // [num_experts, N, 4 * d_model]
     float* __restrict__ hidden_mlp_layer_2_out = args.hidden_mlp_layer_2_out;          // [num_experts, N, d_model]
 
@@ -495,8 +501,9 @@ __global__ void baseline(MoEArgs args){
     int rows_per_expert = CAP_from_args;
 
     wmma_db<true>(1.0f, per_expert_wmma_inputs, expert_up_proj_weights, hidden_mlp_layer_1_out, num_experts * rows_per_expert, up_proj_dim * d_model, d_model);
+    wmma_db<true>(1.0f, per_expert_wmma_inputs, expert_gate_proj_weights, hidden_mlp_gate_out, num_experts * rows_per_expert, up_proj_dim * d_model, d_model);
 
-    fp32_to_fp16(hidden_mlp_layer_1_out, hidden_mlp_layer_1_out_fp16, rows_per_expert);
+    fp32_to_fp16(hidden_mlp_layer_1_out, hidden_mlp_gate_out, hidden_mlp_layer_1_out_fp16, rows_per_expert);
 
     __syncthreads(); // ensure fp32->fp16 conversion is complete before second GEMM
 

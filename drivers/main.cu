@@ -72,15 +72,16 @@ int main(int argc, char** argv){
     std::vector<half> h_input((size_t)num_batches * N * d_model);
     std::vector<float> h_final_output(N * d_model);
     std::vector<half> h_expert_up_proj_weights((size_t)num_experts * d_model * up_proj_dim * d_model);
+    std::vector<half> h_expert_gate_proj_weights((size_t)num_experts * d_model * up_proj_dim * d_model);
     std::vector<half> h_expert_down_proj_weights((size_t)num_experts * up_proj_dim * d_model * d_model);
 
     ensure_cache_dir_exists();
-    initialize_host_data(h_input, h_final_output, h_expert_up_proj_weights, h_expert_down_proj_weights);
+    initialize_host_data(h_input, h_final_output, h_expert_up_proj_weights, h_expert_gate_proj_weights, h_expert_down_proj_weights);
 
     printf("Allocating and copying data to device ... \n");
     // enable capacity-aware allocations only when running kernels other than baseline and unfused (unfused has it's own dedicated launcher)
     bool use_capacity = (kernel != "baseline");
-    MoEArgs args = allocate_and_copy_to_device(h_input, h_final_output, h_expert_up_proj_weights, h_expert_down_proj_weights, use_capacity);
+    MoEArgs args = allocate_and_copy_to_device(h_input, h_final_output, h_expert_up_proj_weights, h_expert_gate_proj_weights, h_expert_down_proj_weights, use_capacity);
 
 
 

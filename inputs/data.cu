@@ -11,12 +11,14 @@ void initialize_host_data(
     std::vector<half>& h_input,
     std::vector<float>& h_final_output,
     std::vector<half>& h_expert_up_proj_weights,
+    std::vector<half>& h_expert_gate_proj_weights,
     std::vector<half>& h_expert_down_proj_weights
 ) {
     // Zero-initialize all host vectors
     std::fill(h_input.begin(), h_input.end(), __float2half(0.0f));
     std::fill(h_final_output.begin(), h_final_output.end(), 0.0f);
     std::fill(h_expert_up_proj_weights.begin(), h_expert_up_proj_weights.end(), __float2half(0.0f));
+    std::fill(h_expert_gate_proj_weights.begin(), h_expert_gate_proj_weights.end(), __float2half(0.0f));
     std::fill(h_expert_down_proj_weights.begin(), h_expert_down_proj_weights.end(), __float2half(0.0f));
 }
 
@@ -24,6 +26,7 @@ MoEArgs allocate_and_copy_to_device(
     const std::vector<half>& h_input,
     const std::vector<float>& h_final_output,
     const std::vector<half>& h_expert_up_proj_weights,
+    const std::vector<half>& h_expert_gate_proj_weights,
     const std::vector<half>& h_expert_down_proj_weights,
     bool use_capacity
 ) {
@@ -67,6 +70,14 @@ MoEArgs allocate_and_copy_to_device(
         
         CHECK_CUDA(cudaMalloc(&args.expert_up_proj_weights, size));
         CHECK_CUDA(cudaMemcpy((void*)args.expert_up_proj_weights, h_expert_up_proj_weights.data(), size, cudaMemcpyHostToDevice));
+    }
+
+    // Allocate and copy expert_gate_proj_weights
+    {
+        size_t size = (size_t)num_experts * d_model * (up_proj_dim * d_model) * sizeof(half);
+        
+        CHECK_CUDA(cudaMalloc(&args.expert_gate_proj_weights, size));
+        CHECK_CUDA(cudaMemcpy((void*)args.expert_gate_proj_weights, h_expert_gate_proj_weights.data(), size, cudaMemcpyHostToDevice));
     }
 
     // Allocate and copy expert_down_proj_weights
@@ -143,6 +154,13 @@ MoEArgs allocate_and_copy_to_device(
     }
 
     {
+        // hidden_mlp_gate_out: [num_batches, num_experts, CAP, 4 * d_model]
+        size_t size = (size_t)num_batches * num_experts * CAP * (up_proj_dim * d_model) * sizeof(float);
+        
+        CHECK_CUDA(cudaMalloc(&args.hidden_mlp_gate_out, size));
+    }
+
+    {
         // hidden_mlp_layer_1_out_fp16: [num_batches, num_experts, CAP, 4 * d_model]
         size_t size = (size_t)num_batches * num_experts * CAP * (up_proj_dim * d_model) * sizeof(half);
         
@@ -171,6 +189,7 @@ void cleanup_device_data(MoEArgs& args) {
     if (args.input) CHECK_CUDA(cudaFree((void*)args.input));
     if (args.router_weights) CHECK_CUDA(cudaFree((void*)args.router_weights));
     if (args.expert_up_proj_weights) CHECK_CUDA(cudaFree((void*)args.expert_up_proj_weights));
+    if (args.expert_gate_proj_weights) CHECK_CUDA(cudaFree((void*)args.expert_gate_proj_weights));
     if (args.expert_down_proj_weights) CHECK_CUDA(cudaFree((void*)args.expert_down_proj_weights));
     if (args.expert_logits) CHECK_CUDA(cudaFree(args.expert_logits));
     if (args.selected_expert_indices) CHECK_CUDA(cudaFree(args.selected_expert_indices));
@@ -180,6 +199,7 @@ void cleanup_device_data(MoEArgs& args) {
     if (args.expert_token_weights) CHECK_CUDA(cudaFree(args.expert_token_weights));
     if (args.per_expert_wmma_inputs) CHECK_CUDA(cudaFree(args.per_expert_wmma_inputs));
     if (args.hidden_mlp_layer_1_out) CHECK_CUDA(cudaFree(args.hidden_mlp_layer_1_out));
+    if (args.hidden_mlp_gate_out) CHECK_CUDA(cudaFree(args.hidden_mlp_gate_out));
     if (args.hidden_mlp_layer_1_out_fp16) CHECK_CUDA(cudaFree(args.hidden_mlp_layer_1_out_fp16));
     if (args.hidden_mlp_layer_2_out) CHECK_CUDA(cudaFree(args.hidden_mlp_layer_2_out));
     if (args.final_output) CHECK_CUDA(cudaFree(args.final_output));

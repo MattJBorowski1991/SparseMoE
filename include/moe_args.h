@@ -8,6 +8,7 @@ struct MoEArgs {
     // model weights
     const half* router_weights;                     // [d_model, num_experts]
     const half* expert_up_proj_weights;             // [num_experts, d_model, 4 * d_model]
+    const half* expert_gate_proj_weights;           // [num_experts, d_model, 4 * d_model]
     const half* expert_down_proj_weights;           // [num_experts, 4 * d_model, d_model]
     //intermediate buffers, pre-allocated by host
     float*  expert_logits;                          // [N, num_experts] = output of the routing layer
@@ -18,6 +19,7 @@ struct MoEArgs {
     float*  expert_token_weights;                   // [num_experts, N]
     half* per_expert_wmma_inputs;                   // [num_experts, N, d_model]
     float* hidden_mlp_layer_1_out;                  // [num_experts, N, 4 * d_model]
+    float* hidden_mlp_gate_out;                     // [num_experts, N, 4 * d_model]
     half* hidden_mlp_layer_1_out_fp16;
     float* hidden_mlp_layer_2_out;                  // [num_experts, N, d_model]
     //final output

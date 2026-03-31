@@ -274,10 +274,11 @@ extern "C" __global__ void assign_per_expert_wmma_inputs_kernel(const half* inpu
 }
 
 
-extern "C" __global__ void fp32_to_fp16_kernel(const float* input, half* output, int total_size) {
+extern "C" __global__ void fp32_to_fp16_kernel(const float* up_input, const float* gate_input, half* output, int total_size) {
     const int batch = blockIdx.z;
 
-    const float* input_b = input + batch * num_experts * N * (up_proj_dim * d_model);
+    const float* up_input_b = up_input + batch * num_experts * N * (up_proj_dim * d_model);
+    const float* gate_input_b = gate_input + batch * num_experts * N * (up_proj_dim * d_model);
     half* output_b = output + batch *  num_experts * N * (up_proj_dim * d_model);
 
     const int block_linear = blockIdx.y * gridDim.x + blockIdx.x;
@@ -285,7 +286,9 @@ extern "C" __global__ void fp32_to_fp16_kernel(const float* input, half* output,
     const int global_stride = gridDim.x * gridDim.y * blockDim.x;
 
     for (int idx = global_tid; idx < total_size; idx += global_stride) {
-        output_b[idx] = __float2half(input_b[idx]);
+        const float gate = gate_input_b[idx];
+        const float silu_gate = gate / (1.0f + __expf(-gate));
+        output_b[idx] = __float2half(up_input_b[idx] * silu_gate);
     }
 }
 
@@ -355,8 +358,9 @@ extern "C" void solve(MoEArgs args){
     assign_per_expert_wmma_inputs_kernel<<<blocks_rows, threads>>>(args.input, args.expert_counts, args.expert_token_ids, args.per_expert_wmma_inputs);
 
     wmma_db_kernel<<<blocks_up, threads>>>(args.per_expert_wmma_inputs, args.expert_up_proj_weights, args.hidden_mlp_layer_1_out, num_experts * N, up_proj_dim * d_model, d_model, 1);
+    wmma_db_kernel<<<blocks_up, threads>>>(args.per_expert_wmma_inputs, args.expert_gate_proj_weights, args.hidden_mlp_gate_out, num_experts * N, up_proj_dim * d_model, d_model, 1);
 
-    fp32_to_fp16_kernel<<<blocks_convert, threads>>>(args.hidden_mlp_layer_1_out, args.hidden_mlp_layer_1_out_fp16, num_experts * N * up_proj_dim * d_model);
+    fp32_to_fp16_kernel<<<blocks_convert, threads>>>(args.hidden_mlp_layer_1_out, args.hidden_mlp_gate_out, args.hidden_mlp_layer_1_out_fp16, num_experts * N * up_proj_dim * d_model);
 
     wmma_db_kernel<<<blocks_down, threads>>>(args.hidden_mlp_layer_1_out_fp16, args.expert_down_proj_weights, args.hidden_mlp_layer_2_out, num_experts * N, d_model, up_proj_dim * d_model, 1);
 

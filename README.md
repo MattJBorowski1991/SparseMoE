@@ -34,7 +34,7 @@ Input shape: `[num_batches, N, d_model]` — tokens batched by sequence length `
    - `CAP` is computed per the formula below; empty slots are padded with zeros.
    - If an expert receives more than `CAP` assignments, extra routes are dropped.
 4. Expert compute
-   - Each expert processes its packed buffer: `[m, d_model] -> up-proj -> activation -> down-proj -> [m, d_model]` where `m` ≤ `CAP`.
+   - Each expert processes its packed buffer: `[m, d_model] -> (up-proj, gate-proj) -> SwiGLU -> down-proj -> [m, d_model]` where `m` ≤ `CAP`.
    - Implementations use WMMA-friendly tiling; matrices are padded to WMMA tile sizes.
 5. Combine
    - Multiply expert outputs by their gating weights and scatter-accumulate back into `[N, d_model]`.
@@ -82,6 +82,8 @@ If your GPU memory is limited, try the `capacity` variant which reduces per-expe
 ## Next steps / ideas
 
 - Per-kernel Nsight Compute analysis to identify cache/DRAM bottlenecks.
+- Profile both for prefill (large N) and decode (N=1)
+- Different quantizations with accuracy measurement
 - Grouped GEMM: concatenate expert buffers and run a batched/grouped GEMM, masking out padded rows afterward.
 - Tune tile sizes and shared-memory usage for better occupancy.
 
