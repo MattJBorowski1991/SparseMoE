@@ -126,9 +126,7 @@ static __device__ __forceinline__ void mma_m16n8k16_f32(
 
 Summary: both swizzling attempts resulted in deterioration of perfomance due to the decrease in Memory & DRAM thoughput. 
 
-<p align="center">
-    <img src="../images/run2/throughput_chart.png" alt="Throughput chart" />
-</p>
+![Throughput](../../images/run2/throughput_chart.png)
 
 ### GPU Speed Of Light Throughput
 
