@@ -1,6 +1,6 @@
-Profiling analysis of capacity_v3. Motivation for performing swizzling via ldmatrix and mma.sync primitives: 
+Profiling analysis of swizzle_ldmatrix. Motivation for performing swizzling via ldmatrix and mma.sync primitives: 
 
-capacity_v2 swizzles the stored layout but still pays extra reorder/unswizzle cost, while capacity_v3 tries to make the swizzled layout match the tensor-core consumer path directly.
+swizzle_xor swizzles the stored layout but still pays extra reorder/unswizzle cost, while swizzle_ldmatrix tries to make the swizzled layout match the tensor-core consumer path directly.
 
 So the motivation is:
 

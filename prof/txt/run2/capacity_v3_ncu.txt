@@ -1,19 +1,19 @@
-==PROF== Connected to process 33622 (/teamspace/studios/this_studio/SparseMoE/bin/profile_capacity_v3)
-==PROF== Profiling "capacity_v3(MoEArgs)" - 0: 0%
+==PROF== Connected to process 33622 (/teamspace/studios/this_studio/SparseMoE/bin/profile_swizzle_ldmatrix)
+==PROF== Profiling "swizzle_ldmatrix(MoEArgs)" - 0: 0%
 ==WARNING== Backing up device memory in system memory. Kernel replay might be slow. Consider using "--replay-mode application" to avoid memory save-and-restore.
 ....50%....100% - 8 passes
-==PROF== Profiling "capacity_v3(MoEArgs)" - 1: 0%....50%....100% - 8 passes
-==PROF== Profiling "capacity_v3(MoEArgs)" - 2: 0%....50%....100% - 8 passes
-==PROF== Profiling "capacity_v3(MoEArgs)" - 3: 0%....50%....100% - 8 passes
-==PROF== Profiling "capacity_v3(MoEArgs)" - 4: 0%....50%....100% - 8 passes
-==PROF== Profiling "capacity_v3(MoEArgs)" - 5: 0%....50%....100% - 8 passes
-==PROF== Profiling "capacity_v3(MoEArgs)" - 6: 0%....50%....100% - 8 passes
-==PROF== Profiling "capacity_v3(MoEArgs)" - 7: 0%....50%....100% - 8 passes
-==PROF== Profiling "capacity_v3(MoEArgs)" - 8: 0%....50%....100% - 8 passes
-==PROF== Profiling "capacity_v3(MoEArgs)" - 9: 0%....50%....100% - 8 passes
-==PROF== Profiling "capacity_v3(MoEArgs)" - 10: 0%....50%....100% - 8 passes
-==PROF== Profiling "capacity_v3(MoEArgs)" - 11: 0%....50%....100% - 8 passes
-==PROF== Profiling "capacity_v3(MoEArgs)" - 12: 0%....50%....100% - 8 passes
+==PROF== Profiling "swizzle_ldmatrix(MoEArgs)" - 1: 0%....50%....100% - 8 passes
+==PROF== Profiling "swizzle_ldmatrix(MoEArgs)" - 2: 0%....50%....100% - 8 passes
+==PROF== Profiling "swizzle_ldmatrix(MoEArgs)" - 3: 0%....50%....100% - 8 passes
+==PROF== Profiling "swizzle_ldmatrix(MoEArgs)" - 4: 0%....50%....100% - 8 passes
+==PROF== Profiling "swizzle_ldmatrix(MoEArgs)" - 5: 0%....50%....100% - 8 passes
+==PROF== Profiling "swizzle_ldmatrix(MoEArgs)" - 6: 0%....50%....100% - 8 passes
+==PROF== Profiling "swizzle_ldmatrix(MoEArgs)" - 7: 0%....50%....100% - 8 passes
+==PROF== Profiling "swizzle_ldmatrix(MoEArgs)" - 8: 0%....50%....100% - 8 passes
+==PROF== Profiling "swizzle_ldmatrix(MoEArgs)" - 9: 0%....50%....100% - 8 passes
+==PROF== Profiling "swizzle_ldmatrix(MoEArgs)" - 10: 0%....50%....100% - 8 passes
+==PROF== Profiling "swizzle_ldmatrix(MoEArgs)" - 11: 0%....50%....100% - 8 passes
+==PROF== Profiling "swizzle_ldmatrix(MoEArgs)" - 12: 0%....50%....100% - 8 passes
 Allocating and copying data to device ... 
 Running 3 warmup runs... 
 Total duration via cudaEventRecord: 15746.470 ms
@@ -32,8 +32,8 @@ Total duration via cudaEventRecord: 15361.784 ms
 Total duration via cudaEventRecord: 15311.303 ms
 Profiling is complete.
 ==PROF== Disconnected from process 33622
-[33622] profile_capacity_v3@127.0.0.1
-  capacity_v3(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+[33622] profile_swizzle_ldmatrix@127.0.0.1
+  swizzle_ldmatrix(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
     Section: GPU Speed Of Light Throughput
     ----------------------- ----------- ------------
     Metric Name             Metric Unit Metric Value
@@ -111,7 +111,7 @@ Profiling is complete.
     Total SMSP Elapsed Cycles        cycle   8564570072
     -------------------------- ----------- ------------
 
-  capacity_v3(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+  swizzle_ldmatrix(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
     Section: GPU Speed Of Light Throughput
     ----------------------- ----------- ------------
     Metric Name             Metric Unit Metric Value
@@ -189,7 +189,7 @@ Profiling is complete.
     Total SMSP Elapsed Cycles        cycle   8573595512
     -------------------------- ----------- ------------
 
-  capacity_v3(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+  swizzle_ldmatrix(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
     Section: GPU Speed Of Light Throughput
     ----------------------- ----------- ------------
     Metric Name             Metric Unit Metric Value
@@ -267,7 +267,7 @@ Profiling is complete.
     Total SMSP Elapsed Cycles        cycle   8626128456
     -------------------------- ----------- ------------
 
-  capacity_v3(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+  swizzle_ldmatrix(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
     Section: GPU Speed Of Light Throughput
     ----------------------- ----------- ------------
     Metric Name             Metric Unit Metric Value
@@ -345,7 +345,7 @@ Profiling is complete.
     Total SMSP Elapsed Cycles        cycle   8614692256
     -------------------------- ----------- ------------
 
-  capacity_v3(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+  swizzle_ldmatrix(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
     Section: GPU Speed Of Light Throughput
     ----------------------- ----------- ------------
     Metric Name             Metric Unit Metric Value
@@ -423,7 +423,7 @@ Profiling is complete.
     Total SMSP Elapsed Cycles        cycle   8605261792
     -------------------------- ----------- ------------
 
-  capacity_v3(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+  swizzle_ldmatrix(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
     Section: GPU Speed Of Light Throughput
     ----------------------- ----------- ------------
     Metric Name             Metric Unit Metric Value
@@ -500,7 +500,7 @@ Profiling is complete.
     Total SMSP Elapsed Cycles        cycle   8693109224
     -------------------------- ----------- ------------
 
-  capacity_v3(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+  swizzle_ldmatrix(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
     Section: GPU Speed Of Light Throughput
     ----------------------- ----------- ------------
     Metric Name             Metric Unit Metric Value
@@ -578,7 +578,7 @@ Profiling is complete.
     Total SMSP Elapsed Cycles        cycle   8584807664
     -------------------------- ----------- ------------
 
-  capacity_v3(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+  swizzle_ldmatrix(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
     Section: GPU Speed Of Light Throughput
     ----------------------- ----------- ------------
     Metric Name             Metric Unit Metric Value
@@ -656,7 +656,7 @@ Profiling is complete.
     Total SMSP Elapsed Cycles        cycle   8581959664
     -------------------------- ----------- ------------
 
-  capacity_v3(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+  swizzle_ldmatrix(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
     Section: GPU Speed Of Light Throughput
     ----------------------- ----------- ------------
     Metric Name             Metric Unit Metric Value
@@ -734,7 +734,7 @@ Profiling is complete.
     Total SMSP Elapsed Cycles        cycle   8605275176
     -------------------------- ----------- ------------
 
-  capacity_v3(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+  swizzle_ldmatrix(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
     Section: GPU Speed Of Light Throughput
     ----------------------- ----------- ------------
     Metric Name             Metric Unit Metric Value
@@ -812,7 +812,7 @@ Profiling is complete.
     Total SMSP Elapsed Cycles        cycle   8594268216
     -------------------------- ----------- ------------
 
-  capacity_v3(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+  swizzle_ldmatrix(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
     Section: GPU Speed Of Light Throughput
     ----------------------- ----------- ------------
     Metric Name             Metric Unit Metric Value
@@ -889,7 +889,7 @@ Profiling is complete.
     Total SMSP Elapsed Cycles        cycle   8706103896
     -------------------------- ----------- ------------
 
-  capacity_v3(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+  swizzle_ldmatrix(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
     Section: GPU Speed Of Light Throughput
     ----------------------- ----------- ------------
     Metric Name             Metric Unit Metric Value
@@ -967,7 +967,7 @@ Profiling is complete.
     Total SMSP Elapsed Cycles        cycle   8545686584
     -------------------------- ----------- ------------
 
-  capacity_v3(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
+  swizzle_ldmatrix(MoEArgs) (64, 8, 4)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.9
     Section: GPU Speed Of Light Throughput
     ----------------------- ----------- ------------
     Metric Name             Metric Unit Metric Value

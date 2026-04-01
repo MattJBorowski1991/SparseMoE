@@ -1,86 +1,14 @@
 # Run 2 — Nsight Compute: Swizzling
 
-Kernels profiled: [capacity.cu](kernels/capacity.cu), [capacity_v2.cu](kernels/capacity_v2.cu) and [capacity_v3.cu](kernels/capacity_v3.cu).
+Kernels profiled: [capacity.cu](kernels/capacity.cu), [swizzle_xor.cu](kernels/swizzle_xor.cu) and [swizzle_ldmatrix.cu](kernels/swizzle_ldmatrix.cu).
 
 ## Overview
 This report summarizes the two applications of swizzling below and compares them to the base version [capacity.cu](kernels/capacity.cu):
-- [capacity_v2](kernels/capacity_v2.cu) - XOR swizzle
-- [capacity_v3](kernels/capacity_v3.cu) - swizzle via `ldmatrix.sync.aligned` and `mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32` 
+- [swizzle_xor](kernels/swizzle_xor.cu) - XOR swizzle
+- [swizzle_ldmatrix](kernels/swizzle_ldmatrix.cu) - swizzle via `ldmatrix.sync.aligned` and `mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32` 
 
 Both swizzling approaches / thread mapping permutations were applied at 16-byte chunk granularity to match the `cp.async` transaction size and reduce bookkeeping overhead. The aim of this file is to document and explain why neither of the applications yielded performance improvement.
 
-## Current thread mapping - how the bank conflicts occur
-
-This section derives the current shared-memory access pattern in the base kernel and shows why recurring bank-collision groups appear.
-
-### 1. Lane to tile coordinates
-
-In the staging loop, each lane starts from:
-
-$i = 8 \cdot l$, where $l \in [0,31]$ is the lane id.
-
-For a $16 \times 16$ tile:
-
-$row = \left\lfloor \frac{i}{16} \right\rfloor = \left\lfloor \frac{l}{2} \right\rfloor$
-
-$col = i \bmod 16 = (8l) \bmod 16 \in \{0,8\}$
-
-Interpretation: each lane writes one 16-byte segment (8 half elements) into either columns 0 to 7 or columns 8 to 15 of row $\left\lfloor l/2 \right\rfloor$. Even lanes write the first half of the row and odd lanes write the second half.
-
-### 2. Shared-memory bank index
-
-The linear element index at position (row, col) in a WMMA_K=16 column tile is: $index = 16 \cdot row + col$
-
-Hence with half precision (2 bytes per element), byte address inside the tile is:
-
-$addr = 2 \cdot (16 \cdot row + col)$ ($col \in \{0,8\}$)
-
-SRAM has 32 banks, each serving 32-bit word per cycle, hence the bank index is computed at 4-byte bank granularity:
-
-$bank = \left\lfloor \frac{addr}{4} \right\rfloor \bmod 32$
-
-So the starting bank is:
-
-- even lanes: $bank = (8 \cdot row) \bmod 32$
-- odd lanes: $bank = (8 \cdot row + 4) \bmod 32$
-
-Because in [capacity.cu](kernels/capacity.cu) each lane writes 16 bytes and each bank is 4 bytes wide, one lane touches four consecutive banks starting from that bank index.
-
-Exact examples for the current kernel:
-
-- Lane 0: $(row, col) = (0, 0)$, $addr = 0$, start bank $= 0$, banks touched $= 0$ to $3$
-- Lane 1: $(row, col) = (0, 8)$, $addr = 16$, start bank $= 4$, banks touched $= 4$ to $7$
-- Lane 2: $(row, col) = (1, 0)$, $addr = 32$, start bank $= 8$, banks touched $= 8$ to $11$
-- Lane 3: $(row, col) = (1, 8)$, $addr = 48$, start bank $= 12$, banks touched $= 12$ to $15$
-- Lane 4: $(row, col) = (2, 0)$, $addr = 64$, start bank $= 16$, banks touched $= 16$ to $19$
-- Lane 5: $(row, col) = (2, 8)$, $addr = 80$, start bank $= 20$, banks touched $= 20$ to $23$
-- Lane 6: $(row, col) = (3, 0)$, $addr = 96$, start bank $= 24$, banks touched $= 24$ to $27$
-- Lane 7: $(row, col) = (3, 8)$, $addr = 112$, start bank $= 28$, banks touched $= 28$ to $31$
-- Lane 8: $(row, col) = (4, 0)$, $addr = 128$, start bank $= 0$, banks touched $= 0$ to $3$
-- Lane 9: $(row, col) = (4, 8)$, $addr = 144$, start bank $= 4$, banks touched $= 4$ to $7$
-- Lane 10: $(row, col) = (5, 0)$, $addr = 160$, start bank $= 8$, banks touched $= 8$ to $11$
-- Lane 11: $(row, col) = (5, 8)$, $addr = 176$, start bank $= 12$, banks touched $= 12$ to $15$
-- Lane 12: $(row, col) = (6, 0)$, $addr = 192$, start bank $= 16$, banks touched $= 16$ to $19$
-- Lane 13: $(row, col) = (6, 8)$, $addr = 208$, start bank $= 20$, banks touched $= 20$ to $23$
-- Lane 14: $(row, col) = (7, 0)$, $addr = 224$, start bank $= 24$, banks touched $= 24$ to $27$
-- Lane 15: $(row, col) = (7, 8)$, $addr = 240$, start bank $= 28$, banks touched $= 28$ to $31$
-
-This already shows the wraparound: lane 8 returns to the same bank span as lane 0.
-
-### 3. Exact collisions
-
-Exact collision groups in the current kernel:
-
-- Lanes $\{0, 8, 16, 24\}$ all hit banks $0$ to $3$
-- Lanes $\{1, 9, 17, 25\}$ all hit banks $4$ to $7$
-- Lanes $\{2, 10, 18, 26\}$ all hit banks $8$ to $11$
-- Lanes $\{3, 11, 19, 27\}$ all hit banks $12$ to $15$
-- Lanes $\{4, 12, 20, 28\}$ all hit banks $16$ to $19$
-- Lanes $\{5, 13, 21, 29\}$ all hit banks $20$ to $23$
-- Lanes $\{6, 14, 22, 30\}$ all hit banks $24$ to $27$
-- Lanes $\{7, 15, 23, 31\}$ all hit banks $28$ to $31$
-
-So the current mapping is a 4-way bank-conflict pattern.
 
 ## XOR swizzle
 
@@ -198,11 +126,13 @@ static __device__ __forceinline__ void mma_m16n8k16_f32(
 
 Summary: both swizzling attempts resulted in deterioration of perfomance due to the decrease in Memory & DRAM thoughput. 
 
+<p align="center">
+    <img src="../images/run2/throughput_chart.png" alt="Throughput chart" />
+</p>
+
 ### GPU Speed Of Light Throughput
 
-> **Comment:**
-
-| Metric Name | Metric Unit | capacity | capacity_v2 | capacity_v3 |
+| Metric Name | Metric Unit | capacity | swizzle_xor | swizzle_ldmatrix |
 |---|---|---:|---:|---:|
 | DRAM Frequency | GHz | 6.24 | 6.24 | 6.24 |
 | SM Frequency | MHz | 804.67 | 822.95 | 803.42 |
@@ -217,14 +147,14 @@ Summary: both swizzling attempts resulted in deterioration of perfomance due to 
 
 Comments:
 - capacity: INF This workload is utilizing greater than 80.0% of the available compute or memory performance of the device. To further improve performance, work will likely need to be shifted from the most utilized to another unit. Start by analyzing DRAM in the Memory Workload Analysis section.
-- capacity_v2: INF Compute and Memory are well-balanced: To reduce runtime, both computation and memory traffic must be reduced. Check both the Compute Workload Analysis and Memory Workload Analysis sections.
-- capacity_v3: OPT Memory is more heavily utilized than Compute: Look at the Memory Workload Analysis section to identify the DRAM bottleneck. Check memory replay (coalescing) metrics to make sure you're efficiently utilizing the bytes transferred. Also consider whether it is possible to do more work per memory access (kernel fusion) or whether there are values you can (re)compute.
+- swizzle_xor: INF Compute and Memory are well-balanced: To reduce runtime, both computation and memory traffic must be reduced. Check both the Compute Workload Analysis and Memory Workload Analysis sections.
+- swizzle_ldmatrix: OPT Memory is more heavily utilized than Compute: Look at the Memory Workload Analysis section to identify the DRAM bottleneck. Check memory replay (coalescing) metrics to make sure you're efficiently utilizing the bytes transferred. Also consider whether it is possible to do more work per memory access (kernel fusion) or whether there are values you can (re)compute.
 
 ### Launch Statistics
 
 > **Comment:**
 
-| Metric Name | Metric Unit | capacity | capacity_v2 | capacity_v3 |
+| Metric Name | Metric Unit | capacity | swizzle_xor | swizzle_ldmatrix |
 |---|---|---:|---:|---:|
 | Block Size |  | 256 | 256 | 256 |
 | Function Cache Configuration |  | CachePreferNone | CachePreferNone | CachePreferNone |
@@ -244,7 +174,7 @@ Comments:
 
 ## Occupancy
 
-| Metric Name | Metric Unit | capacity | capacity_v2 | capacity_v3 |
+| Metric Name | Metric Unit | capacity | swizzle_xor | swizzle_ldmatrix |
 |---|---|---:|---:|---:|
 | Block Limit SM | block | 24 | 24 | 24 |
 | Block Limit Registers | block | 3 | 3 | 3 |
@@ -260,7 +190,7 @@ Comments (same for all):
 
 ## GPU and Memory Workload Distribution
 
-| Metric Name | Metric Unit | capacity | capacity % | capacity_v2 | capacity_v2 % | capacity_v3 | capacity_v3 % |
+| Metric Name | Metric Unit | capacity | capacity % | swizzle_xor | swizzle_xor % | swizzle_ldmatrix | swizzle_ldmatrix % |
 |---|---|---:|---:|---:|---:|---:|---:|
 | Average DRAM Active Cycles | cycle | 199,112,960 | - | 264,573,200 | - | 227,192,048 | - |
 | Average L1 Active Cycles | cycle | 29,320,942 | - | 55,109,656 | - | 35,857,618 | - |

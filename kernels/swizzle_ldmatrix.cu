@@ -5,11 +5,63 @@ using namespace nvcuda;         // Brings wmma:: into scope
 #include <stdio.h>
 #include <assert.h>
 
-#define MOE_KERNEL capacity_v2
+#define MOE_KERNEL swizzle_ldmatrix
 // capacity variant requires capacity-aware allocations
 #define MOE_USES_CAPACITY 1
-// Swizzle at 16B chunk granularity to preserve cp.async destination alignment.
-#define SWIZZLE_CHUNK_MASK 0x1
+
+static __device__ __forceinline__ unsigned smem_addr(const void* ptr)
+{
+    return static_cast<unsigned>(__cvta_generic_to_shared(ptr));
+}
+
+static __device__ __forceinline__ void ldmatrix_a_m16n8k16(
+    const half* tile,
+    int lane_id,
+    int ld,
+    unsigned (&a)[4]
+)
+{
+    // Matrix order expected by mma.sync: top-left, bottom-left, top-right, bottom-right.
+    int group = lane_id >> 3;
+    int row = (lane_id & 7) + ((group & 1) << 3);
+    int col = (group >> 1) << 3;
+    unsigned addr = smem_addr(tile + row * ld + col);
+    asm volatile(
+        "ldmatrix.sync.aligned.x4.m8n8.shared.b16 {%0, %1, %2, %3}, [%4];\n"
+        : "=r"(a[0]), "=r"(a[1]), "=r"(a[2]), "=r"(a[3])
+        : "r"(addr));
+}
+
+static __device__ __forceinline__ void ldmatrix_b_m16n8k16(
+    const half* tile,
+    int lane_id,
+    int ld,
+    int col_block,
+    unsigned (&b)[2]
+)
+{
+    // For .x2, threads 16-31 can reuse the lower-thread addresses.
+    int group = (lane_id >> 3) & 1;
+    int row = (lane_id & 7) + (group << 3);
+    unsigned addr = smem_addr(tile + row * ld + col_block);
+    asm volatile(
+        "ldmatrix.sync.aligned.x2.trans.m8n8.shared.b16 {%0, %1}, [%2];\n"
+        : "=r"(b[0]), "=r"(b[1])
+        : "r"(addr));
+}
+
+static __device__ __forceinline__ void mma_m16n8k16_f32(
+    const unsigned (&a)[4],
+    const unsigned (&b)[2],
+    float (&c)[4]
+)
+{
+    asm volatile(
+        "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
+        "{%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9}, {%0, %1, %2, %3};\n"
+        : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
+        : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b[0]), "r"(b[1]));
+}
 
 template<bool calculatePerExpert>
 static __device__ __forceinline__ void wmma_db(
@@ -64,10 +116,11 @@ static __device__ __forceinline__ void wmma_db(
     __shared__ __align__(16) half As[2][WARPS_PER_BLOCK][WMMA_M][WMMA_K + PAD];
     __shared__ __align__(16) half Bs[2][WARPS_PER_BLOCK][WMMA_K][WMMA_N + PAD];
 
-    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> a_frag;
-    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> b_frag;
-    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> c_frag;
-    wmma::fill_fragment(c_frag, 0.0f);
+    unsigned a_regs[4];
+    unsigned b_regs_lo[2];
+    unsigned b_regs_hi[2];
+    float c_regs_lo[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float c_regs_hi[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
     int compute_buf = 0;
     int stage_buf = 1;
@@ -85,8 +138,9 @@ static __device__ __forceinline__ void wmma_db(
     }
     __syncthreads(); 
 
-    wmma::load_matrix_sync(a_frag, &As[compute_buf][warp_id][0][0], WMMA_K + PAD);
-    wmma::load_matrix_sync(b_frag, &Bs[compute_buf][warp_id][0][0], WMMA_N + PAD);
+    ldmatrix_a_m16n8k16(&As[compute_buf][warp_id][0][0], lane_id, WMMA_K + PAD, a_regs);
+    ldmatrix_b_m16n8k16(&Bs[compute_buf][warp_id][0][0], lane_id, WMMA_N + PAD, 0, b_regs_lo);
+    ldmatrix_b_m16n8k16(&Bs[compute_buf][warp_id][0][0], lane_id, WMMA_N + PAD, 8, b_regs_hi);
 
     // Main loop: overlap load (to/from buffers) with compute (in fragments)
     for (int k = WMMA_K; k < K; k += WMMA_K){
@@ -95,32 +149,26 @@ static __device__ __forceinline__ void wmma_db(
         for (int i = lane_id * 8; i < WMMA_M * WMMA_K; i += 32 * 8) {
             int row = i / WMMA_K;
             int col = i % WMMA_K;
-            int col_chunk = col >> 3; // 8 half = 16B chunk
-            int col_chunk_swz = col_chunk ^ (row & SWIZZLE_CHUNK_MASK);
-            int col_swz = col_chunk_swz << 3;
 
-            char* dst = (char*)&As[stage_buf][warp_id][row][col_swz];
+            char* dst = (char*)&As[stage_buf][warp_id][row][col];
             const char* src = (const char*)&A_e[(tile_row_local + row) * K + (k + col)];
 
-            unsigned smem_addr = __cvta_generic_to_shared(dst);  // 32-bit shared addr
+            unsigned dst_addr = smem_addr(dst);  // 32-bit shared addr
             asm volatile("cp.async.ca.shared.global [%0], [%1], 16;"
-                        :: "r"(smem_addr), "l"(src));
+                        :: "r"(dst_addr), "l"(src));
         }
 
         for (int i = lane_id * 8; i < WMMA_K * WMMA_N; i += THREADS_PER_WARP * 8) {
             int row = i / WMMA_N;
             int col = i % WMMA_N;
-            int col_chunk = col >> 3; // 8 half = 16B chunk
-            int col_chunk_swz = col_chunk ^ (row & SWIZZLE_CHUNK_MASK);
-            int col_swz = col_chunk_swz << 3;
 
-            char* dst = (char*)&Bs[stage_buf][warp_id][row][col_swz];
+            char* dst = (char*)&Bs[stage_buf][warp_id][row][col];
             const char* src = (const char*)&B_e[(k + row) * N + (tile_col + col)];
 
-            unsigned smem_addr = __cvta_generic_to_shared(dst);
+            unsigned dst_addr = smem_addr(dst);
             // .cg bypasses L1 for weights (too large to benefit from L1 caching)
             asm volatile("cp.async.cg.shared.global [%0], [%1], 16;"
-                        :: "r"(smem_addr), "l"(src));
+                        :: "r"(dst_addr), "l"(src));
         }
 
         asm volatile("cp.async.commit_group;");
@@ -128,42 +176,43 @@ static __device__ __forceinline__ void wmma_db(
         // No __syncthreads() needed: each warp has its own buffer slot (warp_id-indexed)
         // and cp.async.wait_group 0 already fences this warp's async copies.
 
-        // compute current tile
-        wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+        // compute current 16x16 tile as two 16x8 tensor-op instructions.
+        mma_m16n8k16_f32(a_regs, b_regs_lo, c_regs_lo);
+        mma_m16n8k16_f32(a_regs, b_regs_hi, c_regs_hi);
 
-        // Unswizzle staged tiles back to linear layout expected by wmma::load_matrix_sync.
-        for (int i = lane_id; i < WMMA_M * WMMA_K; i += THREADS_PER_WARP) {
-            int row = i / WMMA_K;
-            int col = i % WMMA_K;
-            int col_chunk = col >> 3;
-            int col_chunk_swz = col_chunk ^ (row & SWIZZLE_CHUNK_MASK);
-            int col_swz = (col_chunk_swz << 3) | (col & 0x7);
-            As[compute_buf][warp_id][row][col] = As[stage_buf][warp_id][row][col_swz];
-        }
-        for (int i = lane_id; i < WMMA_K * WMMA_N; i += THREADS_PER_WARP) {
-            int row = i / WMMA_N;
-            int col = i % WMMA_N;
-            int col_chunk = col >> 3;
-            int col_chunk_swz = col_chunk ^ (row & SWIZZLE_CHUNK_MASK);
-            int col_swz = (col_chunk_swz << 3) | (col & 0x7);
-            Bs[compute_buf][warp_id][row][col] = Bs[stage_buf][warp_id][row][col_swz];
-        }
+        int tmp = compute_buf;
+        compute_buf = stage_buf;
+        stage_buf = tmp;
 
-        wmma::load_matrix_sync(a_frag, &As[compute_buf][warp_id][0][0], WMMA_K + PAD);
-        wmma::load_matrix_sync(b_frag, &Bs[compute_buf][warp_id][0][0], WMMA_N + PAD);
+        ldmatrix_a_m16n8k16(&As[compute_buf][warp_id][0][0], lane_id, WMMA_K + PAD, a_regs);
+        ldmatrix_b_m16n8k16(&Bs[compute_buf][warp_id][0][0], lane_id, WMMA_N + PAD, 0, b_regs_lo);
+        ldmatrix_b_m16n8k16(&Bs[compute_buf][warp_id][0][0], lane_id, WMMA_N + PAD, 8, b_regs_hi);
     }
 
-    //compute last tile 
-    wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+    // compute last tile
+    mma_m16n8k16_f32(a_regs, b_regs_lo, c_regs_lo);
+    mma_m16n8k16_f32(a_regs, b_regs_hi, c_regs_hi);
 
     //********DOUBLE BUFFER END ********
 
-    // Apply alpha and beta*C
-    float* c_dst = C_e + tile_row_local * N + tile_col;
-    
-    for (int i = 0; i < c_frag.num_elements; ++i) c_frag.x[i] = alpha * c_frag.x[i];
-    
-    wmma::store_matrix_sync(c_dst, c_frag, N, wmma::mem_row_major);
+    int row_group = lane_id >> 2;
+    int col_pair = (lane_id & 3) << 1;
+    int row0 = row_group;
+    int row1 = row_group + 8;
+    int col0 = tile_col + col_pair;
+    int col1 = col0 + 1;
+    int col8 = tile_col + 8 + col_pair;
+    int col9 = col8 + 1;
+
+    C_e[(tile_row_local + row0) * N + col0] = alpha * c_regs_lo[0];
+    C_e[(tile_row_local + row0) * N + col1] = alpha * c_regs_lo[1];
+    C_e[(tile_row_local + row1) * N + col0] = alpha * c_regs_lo[2];
+    C_e[(tile_row_local + row1) * N + col1] = alpha * c_regs_lo[3];
+
+    C_e[(tile_row_local + row0) * N + col8] = alpha * c_regs_hi[0];
+    C_e[(tile_row_local + row0) * N + col9] = alpha * c_regs_hi[1];
+    C_e[(tile_row_local + row1) * N + col8] = alpha * c_regs_hi[2];
+    C_e[(tile_row_local + row1) * N + col9] = alpha * c_regs_hi[3];
 }
 
 static __device__ __forceinline__ void fp32_to_fp16(
@@ -476,7 +525,7 @@ static __device__ __forceinline__ void zero_final_output_and_expert_counts(
 
 
 
-__global__ void capacity_v2(MoEArgs args){
+__global__ void swizzle_ldmatrix(MoEArgs args){
 
     // **** list of kernel arguments: start ****
     // (provided via struct MoEArgs from include/moe_args.h for reusability)
