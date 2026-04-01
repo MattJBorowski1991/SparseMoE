@@ -1,6 +1,10 @@
-The goal of this run is to perform a structured, robust approach to swizzling rather than experimenting. 
+# Run 5 — Swizzling Framework
 
-We start with investigating how the bank conflicts exactly occur in [capacity.cu](kernels/capacity.cu), rather than experimenting as we did in [Run 2](prof/md/run2/ncu_details.md) and [Run 3](prof/md/run3/ncu_details.md)
+The goal of this run is to develop a structured swizzling framework rather than rely on ad hoc experimentation.
+
+We begin by analyzing exactly how bank conflicts arise in [capacity.cu](kernels/capacity.cu), instead of iterating experimentally as in [Run 2](prof/md/run2/ncu_details.md) and [Run 3](prof/md/run3/ncu_details.md).
+
+As the implementation baseline, we use [swizzle_ldmatrix.cu](kernels/swizzle_ldmatrix.cu). This path avoids the explicit unswizzle step required by the `wmma::load_matrix_sync` approach, which increased instruction count and degraded performance in [Run 3](prof/md/run3/ncu_details.md).
 
 ## Current thread mapping - how the bank conflicts occur
 
@@ -74,3 +78,17 @@ Exact collision groups in the current kernel:
 - Lanes $\{7, 15, 23, 31\}$ all hit banks $28$ to $31$
 
 So the current mapping is a 4-way bank-conflict pattern.
+
+## Swizzling - framework
+
+For this kernel, swizzling must respect the `cp.async` transaction size: one `cp.async` moves 16 bytes, which here is exactly 8 half values. With `WMMA_K = 16`, each row contains 16 half values = 32 bytes total, so each row is split into exactly two 16-byte chunks: columns 0 to 7 and columns 8 to 15.
+
+That means the swizzle unit is the chunk, not individual half elements. As a result, for this tile shape the only non-identity chunk-level permutation is to swap the left and right half of the row. More complex intra-row swizzles would require breaking a 16-byte transaction, which is not compatible with this `cp.async` staging pattern.
+
+## Autotuning plan
+
+1. Represent the swizzle as a 16-bit row mask, where each bit selects whether that row swaps its left and right 16-byte halves.
+2. Apply the swap on the `ldmatrix` consumer side, while keeping `cp.async` producer stores linear and coalesced.
+3. Tune the row mask, starting from simple structured patterns and ranking candidates by duration.
+4. Validate each strong candidate against the non-swizzled reference to confirm correctness.
+

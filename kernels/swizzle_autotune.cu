@@ -5,37 +5,101 @@ using namespace nvcuda;         // Brings wmma:: into scope
 #include <stdio.h>
 #include <assert.h>
 
-#define MOE_KERNEL capacity
+#define MOE_KERNEL swizzle_autotune
 // capacity variant requires capacity-aware allocations
 #define MOE_USES_CAPACITY 1
 
-// Swizzle tunables (initial values).
-// Current defaults keep identity mapping (a=b=0) while still wiring the path.
+// Autotune toggles and row masks (one bit per row in a 16-row tile).
+// If a bit is set, that row swaps the two 16B halves (col block 0 <-> 8).
+constexpr bool AUTOTUNE_PRODUCER_A = false;
+constexpr bool AUTOTUNE_PRODUCER_B = false;
+constexpr bool AUTOTUNE_CONSUMER_A = false;
+constexpr bool AUTOTUNE_CONSUMER_B = false;
 
-// lane shift: select which higher lane bits are used to form the swizzle group index q
-constexpr int SWIZZLE_S = 3;    // 0, 1, 2, 3, 4
-// lane mask: mask the shifted lane bits to control how many swizzle groups (and which bits) are active
-constexpr int SWIZZLE_M = 0;  // all 5-bit masks: 0,1,2, ..., 31 
-// row mix enable: decide if q-derived bits are XOR-mixed into the row index
-constexpr int SWIZZLE_A = 1;    // 0, 1
-// col mix enable: decide if q-derived bits are XOR-mixed into the column/chunk index
-constexpr int SWIZZLE_B = 0;    // 0, 1
+//each mask is a 16-bit value, row indices are 0,1,..,15 => 2^16-1=65535 options
+// 0x0000 (none); 0xFFFF (all rows); 0xAAAA (odd rows); 0x5555 (even rows); 0xCCCC, 0x3333 (2-row blocks)
+// 0xF0F0, 0x0F0F (4-row blocks); 0x00FF, 0xFF00 (top/bottom half); 
+constexpr unsigned ROW_SWAP_MASK_PRODUCER_A = 0xC3C3;
+constexpr unsigned ROW_SWAP_MASK_PRODUCER_B = 0x3C3C;
+constexpr unsigned ROW_SWAP_MASK_CONSUMER_A = 0xE7E7;
+constexpr unsigned ROW_SWAP_MASK_CONSUMER_B = 0x7E7E;
 
-static __device__ __forceinline__ void swizzle_row_col(
-    int row,
-    int col,
+static __device__ __forceinline__ unsigned smem_addr(const void* ptr)
+{
+    return static_cast<unsigned>(__cvta_generic_to_shared(ptr));
+}
+
+static __device__ __forceinline__ int maybe_swap_half_col(int col, int row, bool enable, unsigned mask)
+{
+    if (enable && ((mask >> row) & 1u)) {
+        return col ^ 8;
+    }
+    return col;
+}
+
+// A is consumed as row-major fragment shape, so ldmatrix uses normal load x4 (not trans)
+static __device__ __forceinline__ void ldmatrix_a_m16n8k16(
+    const half* tile,
     int lane_id,
-    int &row_swz,
-    int &col_swz
+    int ld,
+    unsigned (&a)[4]
 )
 {
-    const int q = (lane_id >> SWIZZLE_S) & SWIZZLE_M;
-    const int row_xor = SWIZZLE_A ? q : 0;
-    const int chunk = col >> 3;
-    const int chunk_xor = SWIZZLE_B ? (q & 1) : 0;
+    // Matrix order expected by mma.sync: top-left, bottom-left, top-right, bottom-right.
+    int group = lane_id >> 3;
+    int row = (lane_id & 7) + ((group & 1) << 3);
+    int col = (group >> 1) << 3;
+    col = maybe_swap_half_col(col, row, AUTOTUNE_CONSUMER_A, ROW_SWAP_MASK_CONSUMER_A);
+    unsigned src = smem_addr(tile + row * ld + col);
+    asm volatile(
+        "ldmatrix.sync.aligned.x4.m8n8.shared.b16 {%0, %1, %2, %3}, [%4];\n" // {...} = 4 destination registers mapping to a[0], a[1], a[2], a[3]; [%4] = source register that maps to src
+        : "=r"(a[0]), "=r"(a[1]), "=r"(a[2]), "=r"(a[3]) //"=r" =output operand written into a general purpose register
+        : "r"(src)); //"r" = put this operand in a general purpose register, other are "l" (64bit integer register) and "f" (float register)
+}
 
-    row_swz = row ^ row_xor;
-    col_swz = ((chunk ^ chunk_xor) << 3) | (col & 0x7);
+// B is consumed as col-major fragment shape, so ldmatrix must use trans
+static __device__ __forceinline__ void ldmatrix_b_m16n8k16(
+    const half* tile,
+    int lane_id,
+    int ld,
+    int col_block,
+    unsigned (&b)[2]
+)
+{
+    // For .x2, threads 16-31 can reuse the lower-thread addresses.
+    int group = (lane_id >> 3) & 1;
+    int row = (lane_id & 7) + (group << 3);
+    int col = maybe_swap_half_col(col_block, row, AUTOTUNE_CONSUMER_B, ROW_SWAP_MASK_CONSUMER_B);
+    unsigned src = smem_addr(tile + row * ld + col);
+    asm volatile(
+        "ldmatrix.sync.aligned.x2.trans.m8n8.shared.b16 {%0, %1}, [%2];\n"
+        : "=r"(b[0]), "=r"(b[1])
+        : "r"(src));
+}
+
+
+// The PTX tensor-core op used with these helpers is mma.sync.aligned.m16n8k16,
+// so one instruction computes only a 16x8 output fragment. The PTX MMA
+// instruction itself therefore requires a full logical 16x16x16 tile to be
+// built in two N-slices: columns 0..7 and 8..15.
+
+//also for A@B we use mma.sync...row.col (load B with trans), 
+// while for A@B^T it would be mma.sync...row.row (load B with x4)
+
+//inputs for mma_m16n8k16_f32: 
+// 4 32-bit registers (8 halves) for A (per thread)
+// 2 32-bit registers (4 halves) for B (per thread)
+static __device__ __forceinline__ void mma_m16n8k16_f32(
+    const unsigned (&a)[4],
+    const unsigned (&b)[2],
+    float (&c)[4]
+)
+{
+    asm volatile(
+        "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
+        "{%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9}, {%0, %1, %2, %3};\n"
+        : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3]) //output operand list (floats), maps to {%0, %1, %2, %3}
+        : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b[0]), "r"(b[1])); // input operand list, maps to {%4, %5, %6, %7}, {%8, %9}
 }
 
 template<bool calculatePerExpert>
@@ -91,93 +155,125 @@ static __device__ __forceinline__ void wmma_db(
     __shared__ __align__(16) half As[2][WARPS_PER_BLOCK][WMMA_M][WMMA_K + PAD];
     __shared__ __align__(16) half Bs[2][WARPS_PER_BLOCK][WMMA_K][WMMA_N + PAD];
 
-    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> a_frag;
-    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> b_frag;
-    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> c_frag;
-    wmma::fill_fragment(c_frag, 0.0f);
+    unsigned a_regs[4];
+    unsigned b_regs_left[2];
+    unsigned b_regs_right[2];
+    unsigned a_regs_next[4];
+    unsigned b_regs_left_next[2];
+    unsigned b_regs_right_next[2];
+    //one thread's fragment of the 16x8 tile of floats (left half of the output 16x16 tile)
+    float c_regs_left[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    //one thread's fragment of the 16x8 tile of floats (right half of the output 16x16 tile)
+    float c_regs_right[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
-    int buf = 0;
+    int compute_buf = 0;
+    int stage_buf = 1;
 
     // Initial tile load: raw cooperative loads (no cp.async)
     for (int i = lane_id; i < WMMA_M * WMMA_K; i += 32) {
         int row = i / WMMA_K;
         int col = i % WMMA_K;
-        int row_swz, col_swz;
-        swizzle_row_col(row, col, lane_id, row_swz, col_swz);
-        As[buf][warp_id][row_swz][col_swz] = A_e[(tile_row_local + row) * K + col];
+        As[compute_buf][warp_id][row][col] = A_e[(tile_row_local + row) * K + col];
     }
     for (int i = lane_id; i < WMMA_K * WMMA_N; i += 32) {
         int row = i / WMMA_N;
         int col = i % WMMA_N;
-        int row_swz, col_swz;
-        swizzle_row_col(row, col, lane_id, row_swz, col_swz);
-        Bs[buf][warp_id][row_swz][col_swz] = B_e[row * N + (tile_col + col)];
+        Bs[compute_buf][warp_id][row][col] = B_e[row * N + (tile_col + col)];
     }
     __syncthreads(); 
 
-    wmma::load_matrix_sync(a_frag, &As[buf][warp_id][0][0], WMMA_K + PAD);
-    wmma::load_matrix_sync(b_frag, &Bs[buf][warp_id][0][0], WMMA_N + PAD);
+    ldmatrix_a_m16n8k16(&As[compute_buf][warp_id][0][0], lane_id, WMMA_K + PAD, a_regs);
+    ldmatrix_b_m16n8k16(&Bs[compute_buf][warp_id][0][0], lane_id, WMMA_N + PAD, 0, b_regs_left);
+    ldmatrix_b_m16n8k16(&Bs[compute_buf][warp_id][0][0], lane_id, WMMA_N + PAD, 8, b_regs_right);
 
     // Main loop: overlap load (to/from buffers) with compute (in fragments)
     for (int k = WMMA_K; k < K; k += WMMA_K){
-        int next = 1 - buf;
+
 
         // Load next tile into the next buffer
         for (int i = lane_id * 8; i < WMMA_M * WMMA_K; i += 32 * 8) {
             int row = i / WMMA_K;
             int col = i % WMMA_K;
+            int col_dst = maybe_swap_half_col(col, row, AUTOTUNE_PRODUCER_A, ROW_SWAP_MASK_PRODUCER_A);
 
-            int row_swz, col_swz;
-            swizzle_row_col(row, col, lane_id, row_swz, col_swz);
-
-            char* dst = (char*)&As[next][warp_id][row_swz][col_swz];
+            char* dst = (char*)&As[stage_buf][warp_id][row][col_dst];
             const char* src = (const char*)&A_e[(tile_row_local + row) * K + (k + col)];
 
-            unsigned smem_addr = __cvta_generic_to_shared(dst);  // 32-bit shared addr
+            unsigned dst_addr = smem_addr(dst);  // 32-bit shared addr
             asm volatile("cp.async.ca.shared.global [%0], [%1], 16;"
-                        :: "r"(smem_addr), "l"(src));
+                        :: "r"(dst_addr), "l"(src));
         }
 
         for (int i = lane_id * 8; i < WMMA_K * WMMA_N; i += THREADS_PER_WARP * 8) {
             int row = i / WMMA_N;
             int col = i % WMMA_N;
+            int col_dst = maybe_swap_half_col(col, row, AUTOTUNE_PRODUCER_B, ROW_SWAP_MASK_PRODUCER_B);
 
-            int row_swz, col_swz;
-            swizzle_row_col(row, col, lane_id, row_swz, col_swz);
-
-            char* dst = (char*)&Bs[next][warp_id][row_swz][col_swz];
+            char* dst = (char*)&Bs[stage_buf][warp_id][row][col_dst];
             const char* src = (const char*)&B_e[(k + row) * N + (tile_col + col)];
 
-            unsigned smem_addr = __cvta_generic_to_shared(dst);
-            asm volatile("cp.async.ca.shared.global [%0], [%1], 16;"
-                        :: "r"(smem_addr), "l"(src));
+            unsigned dst_addr = smem_addr(dst);
+            // .cg bypasses L1 for weights (too large to benefit from L1 caching)
+            asm volatile("cp.async.cg.shared.global [%0], [%1], 16;"
+                        :: "r"(dst_addr), "l"(src));
         }
 
         asm volatile("cp.async.commit_group;");
         asm volatile("cp.async.wait_group 0;");
+        // No __syncthreads() needed: each warp has its own buffer slot (warp_id-indexed)
+        // and cp.async.wait_group 0 already fences this warp's async copies.
 
-        __syncthreads();
-        
+        // Prefetch next tile fragments before MMA to increase distance between
+        // ldmatrix loads and their first use in mma (helps scoreboard stalls).
+        ldmatrix_a_m16n8k16(&As[stage_buf][warp_id][0][0], lane_id, WMMA_K + PAD, a_regs_next);
+        ldmatrix_b_m16n8k16(&Bs[stage_buf][warp_id][0][0], lane_id, WMMA_N + PAD, 0, b_regs_left_next);
+        ldmatrix_b_m16n8k16(&Bs[stage_buf][warp_id][0][0], lane_id, WMMA_N + PAD, 8, b_regs_right_next);
 
-        // compute current tile
-        wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+        // compute current 16x16 tile as two 16x8 tensor-op instructions.
+        mma_m16n8k16_f32(a_regs, b_regs_left, c_regs_left);
+        mma_m16n8k16_f32(a_regs, b_regs_right, c_regs_right);
 
-        buf = next;
-        wmma::load_matrix_sync(a_frag, &As[buf][warp_id][0][0], WMMA_K + PAD);
-        wmma::load_matrix_sync(b_frag, &Bs[buf][warp_id][0][0], WMMA_N + PAD);
+        int tmp = compute_buf;
+        compute_buf = stage_buf;
+        stage_buf = tmp;
+
+        // Promote prefetched fragments to current registers for the next iteration.
+        #pragma unroll
+        for (int t = 0; t < 4; ++t) a_regs[t] = a_regs_next[t];
+        #pragma unroll
+        for (int t = 0; t < 2; ++t) {
+            b_regs_left[t] = b_regs_left_next[t];
+            b_regs_right[t] = b_regs_right_next[t];
+        }
     }
 
-    //compute last tile 
-    wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+    // compute last tile
+    mma_m16n8k16_f32(a_regs, b_regs_left, c_regs_left);
+    mma_m16n8k16_f32(a_regs, b_regs_right, c_regs_right);
 
     //********DOUBLE BUFFER END ********
 
-    // Apply alpha and beta*C
-    float* c_dst = C_e + tile_row_local * N + tile_col;
-    
-    for (int i = 0; i < c_frag.num_elements; ++i) c_frag.x[i] = alpha * c_frag.x[i];
-    
-    wmma::store_matrix_sync(c_dst, c_frag, N, wmma::mem_row_major);
+    // ASSEMBLY OF OUTPUT (independent of swizzle)
+    // assembly of the final 16x16 output tile from two 16x8 output half-tiles from per-thread c_reg values
+    // each thread/lane owning c_regs_left effectively contributes a 2x2 of the left 16x8 tile
+    int row_group = lane_id >> 2;
+    int col_pair = (lane_id & 3) << 1;
+    int row0 = row_group;
+    int row1 = row_group + 8;
+    int col0 = tile_col + col_pair;
+    int col1 = col0 + 1;
+    int col8 = tile_col + 8 + col_pair;
+    int col9 = col8 + 1;
+
+    C_e[(tile_row_local + row0) * N + col0] = alpha * c_regs_left[0];
+    C_e[(tile_row_local + row0) * N + col1] = alpha * c_regs_left[1];
+    C_e[(tile_row_local + row1) * N + col0] = alpha * c_regs_left[2];
+    C_e[(tile_row_local + row1) * N + col1] = alpha * c_regs_left[3];
+
+    C_e[(tile_row_local + row0) * N + col8] = alpha * c_regs_right[0];
+    C_e[(tile_row_local + row0) * N + col9] = alpha * c_regs_right[1];
+    C_e[(tile_row_local + row1) * N + col8] = alpha * c_regs_right[2];
+    C_e[(tile_row_local + row1) * N + col9] = alpha * c_regs_right[3];
 }
 
 static __device__ __forceinline__ void fp32_to_fp16(
@@ -210,9 +306,7 @@ static __device__ __forceinline__ void fp32_to_fp16(
 static __device__ __forceinline__ void top_k_gating(
     const float* logits,                // [num_tokens, num_experts] = [num_batches * N, num_experts]
     int* selected_expert_indices,        // [num_tokens, k]
-    float* selected_expert_weights,      // [num_tokens, k]
-    float* max_vals,                    // allocate in SRAM & initiate
-    int* max_idxs                       // allocate in SRAM & initiate
+    float* selected_expert_weights      // [num_tokens, k]
 ){
     int batch = blockIdx.z;
 
@@ -228,12 +322,12 @@ static __device__ __forceinline__ void top_k_gating(
     const int token_id = blockIdx.x * WARPS_PER_BLOCK + warp_id;
     if (token_id >= N) return;
 
-    float* warp_max_vals = max_vals + warp_id * k;
-    int* warp_max_idxs = max_idxs + warp_id * k;
-
     const float* logits_row = logits_batch + token_id * num_experts;
 
     if (lane_id == 0) {
+        float warp_max_vals[k];
+        int warp_max_idxs[k];
+
         #pragma unroll
         for (int i = 0; i < k; ++i) {
             warp_max_vals[i] = -1e20f;
@@ -261,16 +355,22 @@ static __device__ __forceinline__ void top_k_gating(
         }
 
         float max_val = warp_max_vals[0];
+        float exp_vals[k];
         float sum_of_exps = 0.0f;
-        #pragma unroll
-        for (int l = 0; l < k; ++l) {
-            sum_of_exps += expf(warp_max_vals[l] - max_val);
-        }
 
         #pragma unroll
         for (int l = 0; l < k; ++l) {
+            // Compute each exponential once and reuse it for normalization.
+            float e = __expf(warp_max_vals[l] - max_val);
+            exp_vals[l] = e;
+            sum_of_exps += e;
+        }
+
+        float inv_sum = __fdividef(1.0f, sum_of_exps + 1e-10f);
+        #pragma unroll
+        for (int l = 0; l < k; ++l) {
             selected_expert_indices_batch[token_id * k + l] = warp_max_idxs[l];
-            selected_expert_weights_batch[token_id * k + l] = expf(warp_max_vals[l] - max_val) / (sum_of_exps + 1e-10f);
+            selected_expert_weights_batch[token_id * k + l] = exp_vals[l] * inv_sum;
         }
     }
 
@@ -486,7 +586,7 @@ static __device__ __forceinline__ void zero_final_output_and_expert_counts(
 
 
 
-__global__ void capacity(MoEArgs args){
+__global__ void swizzle_autotune(MoEArgs args){
 
     // **** list of kernel arguments: start ****
     // (provided via struct MoEArgs from include/moe_args.h for reusability)
@@ -522,10 +622,7 @@ __global__ void capacity(MoEArgs args){
 
     wmma_db<false>(1.0f, input, router_weights, expert_logits, N, num_experts, d_model);
 
-    __shared__ float max_vals[WARPS_PER_BLOCK * k];
-    __shared__ int max_indices[WARPS_PER_BLOCK * k];
-
-    top_k_gating(expert_logits, selected_expert_indices, selected_expert_weights, max_vals, max_indices);
+    top_k_gating(expert_logits, selected_expert_indices, selected_expert_weights);
     __syncthreads(); // ensure selected_expert_indices/weights are globally visible before build_per_expert_buffers reads them
 
     build_per_expert_buffers(selected_expert_indices, selected_expert_weights, expert_counts, expert_token_ids, expert_token_weights); 
