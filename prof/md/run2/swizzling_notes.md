@@ -1,30 +1,33 @@
-Swizzling — choosing the right strategy
+# Swizzling Strategy Notes
 
-Summary
--------
-Swizzling (index permutation) is a lightweight technique to reduce shared-memory bank conflicts and improve DRAM access coalescing. Choose the swizzle that best matches (1) your access pattern, (2) the underlying bank layout, and (3) your performance/occupancy trade-offs.
+## Summary
+Swizzling (index permutation) reduces shared-memory bank conflicts and can improve memory coalescing.
 
-1) Access‑pattern driven
-------------------------
-- When to use: workloads that perform systematic reordering in shared memory (e.g., tiling + transpose).
-- Example: shared-memory transpose where threads write `tile[row][col]` and read `tile[col][row]`.
-- Recommended swizzle: column skew / XOR on the column index (example: `col' = col ^ (row & 0x7)`).
-- Rationale: this simple transform removes classic transpose bank conflicts while incurring only a few cheap integer operations.
+You can swizzle rows, columns, or both. In most cases, avoid designs that require unswizzling because they add instructions, shared-memory traffic, and synchronization that can erase the gain.
 
-2) Bank‑layout driven
----------------------
-- When to use: when the hardware bank mapping causes many threads to target the same bank (common for strided accesses).
-- Example: 32-bank SRAM where a warp reads contiguous 32-bit words but a stride maps multiple lanes to the same bank.
-- Recommended swizzle: a permutation that decorrelates bank-id bits (example: `idx' = idx ^ (idx >> 5)` or a row-group XOR). 
-- Rationale: directly addresses the bank-id bit positions, spreading lane accesses across banks and reducing serialization.
+Swizzling is not limited to DRAM -> SRAM copies. It can be applied to any layout mapping, including:
+- DRAM -> SRAM (common for tiled loads)
+- SRAM -> SRAM (reorder or transpose in shared memory)
+- SRAM -> registers (for `ldmatrix`-compatible layouts)
+- DRAM offline packing formats
 
-3) Objective‑driven (speed vs. cost)
------------------------------------
-- When to prefer minimal swizzling: latency‑critical kernels with tight register/shared‑memory budgets.
-- Example policy: swizzle only one tensor (e.g., `B`) and leave the other (`A`) linear.
-- Rationale: a minimal swizzle retains most conflict-reduction benefits while avoiding extra instruction overhead, register use, or shared-memory indexing complexity that can reduce occupancy.
+## 1. Access-Pattern-Driven Design
+- Use when: the kernel performs structured reordering in shared memory, such as tiling plus transpose.
+- Example: threads write `tile[row][col]` and later read `tile[col][row]`.
+- Candidate swizzle: column XOR, for example `col' = col ^ (row & 0x7)`.
+- Why it helps: this often removes transpose-style bank conflicts with low integer-overhead cost.
 
-Practical recommendation for this codebase (v2)
----------------------------------------------
-- Experiment set: {no swizzle, XOR with `row & 1`, `row & 3`, `row & 7`, swizzle only `B`}.
-- Evaluation criteria: prefer the variant that minimizes TLB/L1/L2 shared-excess metrics (e.g., Nsight Compute `L1 Wavefronts Shared Excessive`) and yields the best end-to-end latency (cudaEvent time).
+## 2. Bank-Layout-Driven Design
+- Use when: many lanes map to the same SRAM bank because of stride or addressing pattern.
+- Example: 32-bank shared memory where a stride collapses multiple lanes onto the same bank.
+- Candidate swizzle: permutation that decorrelates bank-index bits, for example `idx' = idx ^ (idx >> 5)` or row-group XOR.
+- Why it helps: spreads lane accesses across banks and reduces serialization.
+
+## 3. Objective-Driven Design (Speed vs Cost)
+- Use when: the kernel is latency-sensitive and register or shared-memory budget is tight.
+- Practical policy: swizzle only one operand, for example `B`, and keep the other, `A`, linear.
+- Why it helps: captures most conflict-reduction benefit while minimizing indexing overhead and occupancy pressure.
+
+## Practical Recommendation for This Codebase (v2)
+- Candidate set: no swizzle, XOR with `row & 1`, XOR with `row & 3`, XOR with `row & 7`, swizzle-only-`B`.
+- Selection rule: choose the variant with the best end-to-end kernel time, and use Nsight metrics as diagnostics, for example shared-memory excess wavefronts.
