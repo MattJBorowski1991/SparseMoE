@@ -27,92 +27,47 @@ $col = i \bmod 16 = (8l) \bmod 16 \in \{0,8\}$
 
 Interpretation: each lane writes one 16-byte segment (8 half elements) into either columns 0 to 7 or columns 8 to 15 of row $\left\lfloor l/2 \right\rfloor$. Even lanes write the first half of the row and odd lanes write the second half.
 
-Exact mapping for the current kernel:
-
-- Lane 0 $\rightarrow$ $(row, col) = (0, 0)$
-- Lane 1 $\rightarrow$ $(row, col) = (0, 8)$
-- Lane 2 $\rightarrow$ $(row, col) = (1, 0)$
-- Lane 3 $\rightarrow$ $(row, col) = (1, 8)$
-- Lane 4 $\rightarrow$ $(row, col) = (2, 0)$
-- Lane 5 $\rightarrow$ $(row, col) = (2, 8)$
-- Lane 6 $\rightarrow$ $(row, col) = (3, 0)$
-- Lane 7 $\rightarrow$ $(row, col) = (3, 8)$
-- Lane 8 $\rightarrow$ $(row, col) = (4, 0)$
-- Lane 9 $\rightarrow$ $(row, col) = (4, 8)$
-- Lane 10 $\rightarrow$ $(row, col) = (5, 0)$
-- Lane 11 $\rightarrow$ $(row, col) = (5, 8)$
-- Lane 12 $\rightarrow$ $(row, col) = (6, 0)$
-- Lane 13 $\rightarrow$ $(row, col) = (6, 8)$
-- Lane 14 $\rightarrow$ $(row, col) = (7, 0)$
-- Lane 15 $\rightarrow$ $(row, col) = (7, 8)$
-
-The same pattern continues for lanes 16 to 31:
-
-- Lane 16 $\rightarrow$ $(8, 0)$, Lane 17 $\rightarrow$ $(8, 8)$
-- Lane 18 $\rightarrow$ $(9, 0)$, Lane 19 $\rightarrow$ $(9, 8)$
-- Lane 20 $\rightarrow$ $(10, 0)$, Lane 21 $\rightarrow$ $(10, 8)$
-- Lane 22 $\rightarrow$ $(11, 0)$, Lane 23 $\rightarrow$ $(11, 8)$
-- Lane 24 $\rightarrow$ $(12, 0)$, Lane 25 $\rightarrow$ $(12, 8)$
-- Lane 26 $\rightarrow$ $(13, 0)$, Lane 27 $\rightarrow$ $(13, 8)$
-- Lane 28 $\rightarrow$ $(14, 0)$, Lane 29 $\rightarrow$ $(14, 8)$
-- Lane 30 $\rightarrow$ $(15, 0)$, Lane 31 $\rightarrow$ $(15, 8)$
-
 ### 2. Shared-memory bank index
 
-With half precision (2 bytes per element), byte address inside the tile is:
+The linear element index at position (row, col) in a WMMA_K=16 column tile is: $index = 16 \cdot row + col$
 
-$addr_{bytes} = 2 \cdot (16 \cdot row + col)$
+Hence with half precision (2 bytes per element), byte address inside the tile is:
 
-Since $col \in \{0,8\}$, this becomes:
+$addr = 2 \cdot (16 \cdot row + col)$ ($col \in \{0,8\}$)
 
-- even lanes: $addr_{bytes} = 32 \cdot row$
-- odd lanes: $addr_{bytes} = 32 \cdot row + 16$
+SRAM has 32 banks, each serving 32-bit word per cycle, hence the bank index is computed at 4-byte bank granularity:
 
-With 4-byte bank granularity and 32 banks:
-
-$bank = \left\lfloor \frac{addr_{bytes}}{4} \right\rfloor \bmod 32$
+$bank = \left\lfloor \frac{addr}{4} \right\rfloor \bmod 32$
 
 So the starting bank is:
 
 - even lanes: $bank = (8 \cdot row) \bmod 32$
 - odd lanes: $bank = (8 \cdot row + 4) \bmod 32$
 
-Because each lane writes 16 bytes and each bank is 4 bytes wide, one lane touches four consecutive banks starting from that bank index.
+Because in [capacity.cu](kernels/capacity.cu) each lane writes 16 bytes and each bank is 4 bytes wide, one lane touches four consecutive banks starting from that bank index.
 
 Exact examples for the current kernel:
 
-- Lane 0: $(row, col) = (0, 0)$, $addr_{bytes} = 2 \cdot (16 \cdot 0 + 0) = 0$, start bank $= 0$, banks touched $= 0$ to $3$
-- Lane 1: $(row, col) = (0, 8)$, $addr_{bytes} = 2 \cdot (16 \cdot 0 + 8) = 16$, start bank $= 4$, banks touched $= 4$ to $7$
-- Lane 2: $(row, col) = (1, 0)$, $addr_{bytes} = 32$, start bank $= 8$, banks touched $= 8$ to $11$
-- Lane 3: $(row, col) = (1, 8)$, $addr_{bytes} = 48$, start bank $= 12$, banks touched $= 12$ to $15$
-- Lane 4: $(row, col) = (2, 0)$, $addr_{bytes} = 64$, start bank $= 16$, banks touched $= 16$ to $19$
-- Lane 5: $(row, col) = (2, 8)$, $addr_{bytes} = 80$, start bank $= 20$, banks touched $= 20$ to $23$
-- Lane 6: $(row, col) = (3, 0)$, $addr_{bytes} = 96$, start bank $= 24$, banks touched $= 24$ to $27$
-- Lane 7: $(row, col) = (3, 8)$, $addr_{bytes} = 112$, start bank $= 28$, banks touched $= 28$ to $31$
-- Lane 8: $(row, col) = (4, 0)$, $addr_{bytes} = 128$, start bank $= 0$, banks touched $= 0$ to $3$
+- Lane 0: $(row, col) = (0, 0)$, $addr = 0$, start bank $= 0$, banks touched $= 0$ to $3$
+- Lane 1: $(row, col) = (0, 8)$, $addr = 16$, start bank $= 4$, banks touched $= 4$ to $7$
+- Lane 2: $(row, col) = (1, 0)$, $addr = 32$, start bank $= 8$, banks touched $= 8$ to $11$
+- Lane 3: $(row, col) = (1, 8)$, $addr = 48$, start bank $= 12$, banks touched $= 12$ to $15$
+- Lane 4: $(row, col) = (2, 0)$, $addr = 64$, start bank $= 16$, banks touched $= 16$ to $19$
+- Lane 5: $(row, col) = (2, 8)$, $addr = 80$, start bank $= 20$, banks touched $= 20$ to $23$
+- Lane 6: $(row, col) = (3, 0)$, $addr = 96$, start bank $= 24$, banks touched $= 24$ to $27$
+- Lane 7: $(row, col) = (3, 8)$, $addr = 112$, start bank $= 28$, banks touched $= 28$ to $31$
+- Lane 8: $(row, col) = (4, 0)$, $addr = 128$, start bank $= 0$, banks touched $= 0$ to $3$
+- Lane 9: $(row, col) = (4, 8)$, $addr = 144$, start bank $= 4$, banks touched $= 4$ to $7$
+- Lane 10: $(row, col) = (5, 0)$, $addr = 160$, start bank $= 8$, banks touched $= 8$ to $11$
+- Lane 11: $(row, col) = (5, 8)$, $addr = 176$, start bank $= 12$, banks touched $= 12$ to $15$
+- Lane 12: $(row, col) = (6, 0)$, $addr = 192$, start bank $= 16$, banks touched $= 16$ to $19$
+- Lane 13: $(row, col) = (6, 8)$, $addr = 208$, start bank $= 20$, banks touched $= 20$ to $23$
+- Lane 14: $(row, col) = (7, 0)$, $addr = 224$, start bank $= 24$, banks touched $= 24$ to $27$
+- Lane 15: $(row, col) = (7, 8)$, $addr = 240$, start bank $= 28$, banks touched $= 28$ to $31$
 
 This already shows the wraparound: lane 8 returns to the same bank span as lane 0.
 
-### 3. Why collision groups repeat every 8 lanes
-
-Compare lane $l$ and lane $l+8$:
-
-- lane parity is unchanged, so both lanes target the same half-row
-- $row$ increases by 4
-
-So the bank shift is:
-
-$(8 \cdot (row+4)) \bmod 32 = (8 \cdot row + 32) \bmod 32 = (8 \cdot row) \bmod 32$
-
-and similarly for odd lanes:
-
-$(8 \cdot (row+4) + 4) \bmod 32 = (8 \cdot row + 36) \bmod 32 = (8 \cdot row + 4) \bmod 32$
-
-Therefore lanes in the set below map to the same starting bank and the same four-bank span:
-
-$\{l, l+8, l+16, l+24\}$
-
-When multiple lanes in one warp hit the same banks in the same instruction, those accesses are replayed/serialized instead of being served fully in parallel.
+### 3. Exact collisions
 
 Exact collision groups in the current kernel:
 
@@ -125,31 +80,7 @@ Exact collision groups in the current kernel:
 - Lanes $\{6, 14, 22, 30\}$ all hit banks $24$ to $27$
 - Lanes $\{7, 15, 23, 31\}$ all hit banks $28$ to $31$
 
-So the current mapping creates eight recurring 4-lane collision groups across the warp.
-
-### 4. Concrete examples
-
-Example A:
-
-- Lane 0: $row=0$, $col=0$, starts at bank $0$
-- Lane 8: $row=4$, $col=0$, starts at bank $0$
-- Lane 16: $row=8$, $col=0$, starts at bank $0$
-- Lane 24: $row=12$, $col=0$, starts at bank $0$
-
-Each of these lanes writes 16 bytes, so they all touch banks 0 to 3.
-
-Example B:
-
-- Lane 1: $row=0$, $col=8$, starts at bank $4$
-- Lane 9: $row=4$, $col=8$, starts at bank $4$
-- Lane 17: $row=8$, $col=8$, starts at bank $4$
-- Lane 25: $row=12$, $col=8$, starts at bank $4$
-
-Each of these lanes writes 16 bytes, so they all touch banks 4 to 7.
-
-These repeated groups are the structural reason the same bank conflicts recur in the current layout.
-
-
+So the current mapping is a 4-way bank-conflict pattern.
 
 ## XOR swizzle
 
@@ -329,22 +260,23 @@ Comments (same for all):
 
 ## GPU and Memory Workload Distribution
 
-| Metric Name | Metric Unit | capacity % | capacity | capacity_v2 % | capacity_v2 | capacity_v3 % | capacity_v3 |
+| Metric Name | Metric Unit | capacity | capacity % | capacity_v2 | capacity_v2 % | capacity_v3 | capacity_v3 % |
 |---|---|---:|---:|---:|---:|---:|---:|
-| Average DRAM Active Cycles | cycle | 28.9% | 199,112,960 | 38.3% | 264,573,200 | 32.9% | 227,192,048 |
-| Average L1 Active Cycles | cycle | 24.4% | 29,320,942 | 45.9% | 55,109,656 | 29.9% | 35,857,618 |
-| Average L2 Active Cycles | cycle | 24.5% | 30,315,918 | 45.4% | 56,303,511 | 30.3% | 37,590,135 |
-| Average SM Active Cycles | cycle | 24.4% | 29,320,942 | 45.9% | 55,109,656 | 29.9% | 35,857,618 |
-| Average SMSP Active Cycles | cycle | 24.4% | 29,318,293 | 45.9% | 55,079,822 | 29.9% | 35,844,260 |
-| Total DRAM Elapsed Cycles | cycle | 24.3% | 1,385,345,024 | 45.6% | 2,599,341,056 | 30.2% | 1,716,303,872 |
-| Total L1 Elapsed Cycles | cycle | 24.1% | 1,723,078,788 | 46.2% | 3,309,925,018 | 29.9% | 2,141,142,518 |
-| Total L2 Elapsed Cycles | cycle | 24.3% | 732,076,992 | 45.7% | 1,378,815,744 | 30.1% | 906,970,200 |
-| Total SM Elapsed Cycles | cycle | 24.1% | 1,723,078,788 | 46.2% | 3,309,925,018 | 29.9% | 2,141,142,518 |
-| Total SMSP Elapsed Cycles | cycle | 24.1% | 6,892,315,152 | 46.2% | 13,239,700,072 | 29.9% | 8,564,570,072 |
-| **Sum of Total Elapsed** | **cycle** | **24.1%** | **12,455,894,744** | **46.1%** | **23,837,706,908** | **29.9%** | **15,470,129,180** |
+| Average DRAM Active Cycles | cycle | 199,112,960 | - | 264,573,200 | - | 227,192,048 | - |
+| Average L1 Active Cycles | cycle | 29,320,942 | - | 55,109,656 | - | 35,857,618 | - |
+| Average L2 Active Cycles | cycle | 30,315,918 | - | 56,303,511 | - | 37,590,135 | - |
+| Average SM Active Cycles | cycle | 29,320,942 | - | 55,109,656 | - | 35,857,618 | - |
+| Average SMSP Active Cycles | cycle | 29,318,293 | - | 55,079,822 | - | 35,844,260 | - |
+| Total DRAM Elapsed Cycles | cycle | 1,385,345,024 | 11.1% | 2,599,341,056 | 10.9% | 1,716,303,872 | 11.1% |
+| Total L1 Elapsed Cycles | cycle | 1,723,078,788 | 13.8% | 3,309,925,018 | 13.9% | 2,141,142,518 | 13.8% |
+| Total L2 Elapsed Cycles | cycle | 732,076,992 | 5.9% | 1,378,815,744 | 5.8% | 906,970,200 | 5.9% |
+| Total SM Elapsed Cycles | cycle | 1,723,078,788 | 13.8% | 3,309,925,018 | 13.9% | 2,141,142,518 | 13.8% |
+| Total SMSP Elapsed Cycles | cycle | 6,892,315,152 | 55.3% | 13,239,700,072 | 55.5% | 8,564,570,072 | 55.4% |
+| **Sum of Total Elapsed** | **cycle** | **12,455,894,744** | **100.0%** | **23,837,706,908** | **100.0%** | **15,470,129,180** | **100.0%** |
 
 Note:
 - The ratio between `Total ... Elapsed Cycles` and `Average ... Active Cycles` is **not expected to be identical** across DRAM, L1, L2, SM, and SMSP.
 - For each subsystem, the `Average ... Active Cycles` value is averaged over the profiled kernel passes/instances collected in that Nsight run.
-- The percentage columns on `Average ... Active Cycles` are relative split across kernels for that row (informational), while `Total ... Elapsed Cycles` percentages represent contribution to total elapsed cycles for that subsystem.
+- Percentage cells are `-` for `Average ... Active Cycles` rows.
+- For `Total ... Elapsed Cycles`, percentages are computed per kernel as `(row total / that kernel's sum of totals)`.
 - These counters are collected at different hardware scopes and with different aggregation semantics, so cross-subsystem ratios should not be compared as if they shared one common denominator.
