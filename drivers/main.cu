@@ -52,6 +52,7 @@ bool ensure_cache_dir_exists(){
 
 int main(int argc, char** argv){
 
+    const std::string binary_name = (argc > 0 && argv[0] != nullptr) ? std::string(argv[0]) : std::string();
     std::string kernel = "baseline";
 
     int warmups = 0;
@@ -63,7 +64,7 @@ int main(int argc, char** argv){
         else if(std::strncmp(argv[i], "--runs=", 7) == 0) runs = std::atoi(argv[i]+7);
         else if(std::strcmp(argv[i], "--help")==0){
             printf("Usage: %s [--kernel=KERNEL] [--warmups=N] [--runs=M] [--random]\n", argv[0]);
-            printf("KERNEL options: baseline, ... \n");
+            printf("KERNEL options: baseline, capacity, capacity_int4, capacity_int4_ptx, capacity_int8, capacity_int8_ptx, capacity_fp8_ptx, ... \n");
             return 0;
         }
     }
@@ -81,7 +82,25 @@ int main(int argc, char** argv){
     printf("Allocating and copying data to device ... \n");
     // enable capacity-aware allocations only when running kernels other than baseline and unfused (unfused has it's own dedicated launcher)
     bool use_capacity = (kernel != "baseline");
-    MoEArgs args = allocate_and_copy_to_device(h_input, h_final_output, h_expert_up_proj_weights, h_expert_gate_proj_weights, h_expert_down_proj_weights, use_capacity);
+    const bool run_int8_allocator =
+        (kernel == "capacity_int8") ||
+        (kernel == "capacity_int8_ptx") ||
+        (binary_name.find("capacity_int8") != std::string::npos);
+    const bool run_int4_allocator =
+        (kernel == "capacity_int4") ||
+        (kernel == "capacity_int4_ptx") ||
+        (binary_name.find("capacity_int4") != std::string::npos);
+    const bool run_fp8_allocator =
+        (kernel == "capacity_fp8_ptx") ||
+        (binary_name.find("capacity_fp8") != std::string::npos);
+
+    MoEArgs args = run_int8_allocator
+        ? allocate_and_copy_to_device_int8(h_input, h_expert_up_proj_weights, h_expert_gate_proj_weights, h_expert_down_proj_weights, use_capacity)
+        : (run_int4_allocator
+            ? allocate_and_copy_to_device_int4(h_input, h_expert_up_proj_weights, h_expert_gate_proj_weights, h_expert_down_proj_weights, use_capacity)
+            : (run_fp8_allocator
+            ? allocate_and_copy_to_device_fp8(h_input, h_expert_up_proj_weights, h_expert_gate_proj_weights, h_expert_down_proj_weights, use_capacity)
+            : allocate_and_copy_to_device(h_input, h_expert_up_proj_weights, h_expert_gate_proj_weights, h_expert_down_proj_weights, use_capacity)));
 
 
 

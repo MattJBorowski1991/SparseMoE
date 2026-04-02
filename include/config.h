@@ -17,9 +17,12 @@ constexpr int THREADS_PER_WARP = 32;
 static_assert( k < THREADS_PER_WARP, "chosen experts cannot exceed 32");
 
 // --- Tiling and launch constants ---
+//WMMA int8: use only 16x16x16, 32x8x16, 8x32x16.
+
 #define WMMA_M 16
-#define WMMA_K 16
 #define WMMA_N 16
+#define WMMA_K 16
+#define WMMA_K_FP16 16
 #define PAD 0
 
 #define WARP_TILES_X 4
