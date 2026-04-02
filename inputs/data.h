@@ -40,6 +40,15 @@ MoEArgs allocate_and_copy_to_device_int4(
     bool use_capacity
 );
 
+// Dedicated int4 PTX path: uploads packed+transposed int4 weights for capacity_int4_ptx.
+MoEArgs allocate_and_copy_to_device_int4_ptx(
+    const std::vector<half>& h_input,
+    const std::vector<half>& h_expert_up_proj_weights,
+    const std::vector<half>& h_expert_gate_proj_weights,
+    const std::vector<half>& h_expert_down_proj_weights,
+    bool use_capacity
+);
+
 // Dedicated fp8 path: uploads fp8 (e4m3) weights and fp8 activation buffers.
 MoEArgs allocate_and_copy_to_device_fp8(
     const std::vector<half>& h_input,

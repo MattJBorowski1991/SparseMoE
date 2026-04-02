@@ -86,6 +86,59 @@ static float quantize_symmetric_per_tensor_int4_packed(
     return scale;
 }
 
+static float quantize_symmetric_per_tensor_int4_packed_transposed(
+    const std::vector<half>& src,
+    std::vector<uint8_t>& qdst_packed_transposed,
+    int experts,
+    int K,
+    int N
+) {
+    const size_t elems_per_expert = (size_t)K * (size_t)N;
+    const size_t expected = (size_t)experts * elems_per_expert;
+    if (src.size() != expected) {
+        qdst_packed_transposed.clear();
+        return 1.0f;
+    }
+
+    // Packed-transposed byte layout per expert: [N/2][K].
+    // Each byte stores two adjacent N-column int4 values at fixed K.
+    const size_t bytes_per_expert = (size_t)(N / 2) * (size_t)K;
+    qdst_packed_transposed.assign((size_t)experts * bytes_per_expert, 0);
+
+    float max_abs = 0.0f;
+    for (size_t i = 0; i < src.size(); ++i) {
+        float v = fabsf(__half2float(src[i]));
+        if (v > max_abs) max_abs = v;
+    }
+
+    float scale = (max_abs > 0.0f) ? (max_abs / 7.0f) : 1.0f;
+
+    for (int e = 0; e < experts; ++e) {
+        const size_t src_base = (size_t)e * elems_per_expert;
+        const size_t dst_base = (size_t)e * bytes_per_expert;
+        for (int k_idx = 0; k_idx < K; ++k_idx) {
+            for (int n_idx = 0; n_idx < N; ++n_idx) {
+                const size_t src_idx = src_base + (size_t)k_idx * (size_t)N + (size_t)n_idx;
+                float x = __half2float(src[src_idx]) / scale;
+                float clamped = fminf(7.0f, fmaxf(-7.0f, x));
+                int q = (int)nearbyintf(clamped);
+                uint8_t nib = (uint8_t)(q & 0xF);
+
+                const size_t byte_idx = dst_base + (size_t)(n_idx / 2) * (size_t)K + (size_t)k_idx;
+                if ((n_idx & 1) == 0) {
+                    qdst_packed_transposed[byte_idx] =
+                        (qdst_packed_transposed[byte_idx] & 0xF0) | nib;
+                } else {
+                    qdst_packed_transposed[byte_idx] =
+                        (qdst_packed_transposed[byte_idx] & 0x0F) | (uint8_t)(nib << 4);
+                }
+            }
+        }
+    }
+
+    return scale;
+}
+
 static void quantize_per_tensor_fp8_e4m3(
     const std::vector<half>& src,
     std::vector<__nv_fp8_e4m3>& qdst
@@ -104,7 +157,8 @@ static MoEArgs allocate_and_copy_to_device_impl(
     bool use_capacity,
     bool int8_only,
     bool fp8_only,
-    bool int4_only
+    bool int4_only,
+    bool int4_ptx_layout
 );
 
 void initialize_host_data(
@@ -137,6 +191,7 @@ MoEArgs allocate_and_copy_to_device(
         use_capacity,
         false,
         false,
+        false,
         false
     );
 }
@@ -149,7 +204,8 @@ static MoEArgs allocate_and_copy_to_device_impl(
     bool use_capacity,
     bool int8_only,
     bool fp8_only,
-    bool int4_only
+    bool int4_only,
+    bool int4_ptx_layout
 ) {
     MoEArgs args;
     std::memset(&args, 0, sizeof(MoEArgs));
@@ -228,9 +284,33 @@ static MoEArgs allocate_and_copy_to_device_impl(
             args.scale_up_w = quantize_symmetric_per_tensor_int4(h_expert_up_proj_weights, h_up_q);
             args.scale_gate_w = quantize_symmetric_per_tensor_int4(h_expert_gate_proj_weights, h_gate_q);
             args.scale_down_w = quantize_symmetric_per_tensor_int4(h_expert_down_proj_weights, h_down_q);
-            quantize_symmetric_per_tensor_int4_packed(h_expert_up_proj_weights, h_up_q_packed);
-            quantize_symmetric_per_tensor_int4_packed(h_expert_gate_proj_weights, h_gate_q_packed);
-            quantize_symmetric_per_tensor_int4_packed(h_expert_down_proj_weights, h_down_q_packed);
+            if (int4_ptx_layout) {
+                quantize_symmetric_per_tensor_int4_packed_transposed(
+                    h_expert_up_proj_weights,
+                    h_up_q_packed,
+                    num_experts,
+                    d_model,
+                    up_proj_dim * d_model
+                );
+                quantize_symmetric_per_tensor_int4_packed_transposed(
+                    h_expert_gate_proj_weights,
+                    h_gate_q_packed,
+                    num_experts,
+                    d_model,
+                    up_proj_dim * d_model
+                );
+                quantize_symmetric_per_tensor_int4_packed_transposed(
+                    h_expert_down_proj_weights,
+                    h_down_q_packed,
+                    num_experts,
+                    up_proj_dim * d_model,
+                    d_model
+                );
+            } else {
+                quantize_symmetric_per_tensor_int4_packed(h_expert_up_proj_weights, h_up_q_packed);
+                quantize_symmetric_per_tensor_int4_packed(h_expert_gate_proj_weights, h_gate_q_packed);
+                quantize_symmetric_per_tensor_int4_packed(h_expert_down_proj_weights, h_down_q_packed);
+            }
         } else {
             args.scale_up_w = quantize_symmetric_per_tensor_int8(h_expert_up_proj_weights, h_up_q);
             args.scale_gate_w = quantize_symmetric_per_tensor_int8(h_expert_gate_proj_weights, h_gate_q);
@@ -373,6 +453,12 @@ static MoEArgs allocate_and_copy_to_device_impl(
         CHECK_CUDA(cudaMalloc(&args.per_expert_wmma_inputs_int8, size));
     }
 
+    if (int4_only) {
+        // per_expert_wmma_inputs_int4: packed [num_batches, num_experts, CAP, d_model/2]
+        size_t size = (size_t)num_batches * num_experts * CAP * d_model * sizeof(uint8_t) / 2;
+        CHECK_CUDA(cudaMalloc(&args.per_expert_wmma_inputs_int4, size));
+    }
+
     if (fp8_only) {
         // per_expert_wmma_inputs_fp8: [num_batches, num_experts, CAP, d_model]
         size_t size = (size_t)num_batches * num_experts * CAP * d_model * sizeof(__nv_fp8_e4m3);
@@ -452,6 +538,7 @@ MoEArgs allocate_and_copy_to_device_int8(
         use_capacity,
         true,
         false,
+        false,
         false
     );
 }
@@ -471,6 +558,27 @@ MoEArgs allocate_and_copy_to_device_int4(
         use_capacity,
         false,
         false,
+        true,
+        false
+    );
+}
+
+MoEArgs allocate_and_copy_to_device_int4_ptx(
+    const std::vector<half>& h_input,
+    const std::vector<half>& h_expert_up_proj_weights,
+    const std::vector<half>& h_expert_gate_proj_weights,
+    const std::vector<half>& h_expert_down_proj_weights,
+    bool use_capacity
+){
+    return allocate_and_copy_to_device_impl(
+        h_input,
+        h_expert_up_proj_weights,
+        h_expert_gate_proj_weights,
+        h_expert_down_proj_weights,
+        use_capacity,
+        false,
+        false,
+        true,
         true
     );
 }
@@ -490,6 +598,7 @@ MoEArgs allocate_and_copy_to_device_fp8(
         use_capacity,
         false,
         true,
+        false,
         false
     );
 }
@@ -518,6 +627,7 @@ void cleanup_device_data(MoEArgs& args) {
     if (args.expert_token_weights) CHECK_CUDA(cudaFree(args.expert_token_weights));
     if (args.per_expert_wmma_inputs) CHECK_CUDA(cudaFree(args.per_expert_wmma_inputs));
     if (args.per_expert_wmma_inputs_int8) CHECK_CUDA(cudaFree(args.per_expert_wmma_inputs_int8));
+    if (args.per_expert_wmma_inputs_int4) CHECK_CUDA(cudaFree(args.per_expert_wmma_inputs_int4));
     if (args.per_expert_wmma_inputs_fp8) CHECK_CUDA(cudaFree(args.per_expert_wmma_inputs_fp8));
     if (args.hidden_mlp_layer_1_out) CHECK_CUDA(cudaFree(args.hidden_mlp_layer_1_out));
     if (args.hidden_mlp_gate_out) CHECK_CUDA(cudaFree(args.hidden_mlp_gate_out));

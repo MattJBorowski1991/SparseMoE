@@ -36,6 +36,7 @@ struct MoEArgs {
     float*  expert_token_weights;                   // [num_experts, N]
     half* per_expert_wmma_inputs;                   // [num_experts, N, d_model]
     int8_t* per_expert_wmma_inputs_int8;            // [num_experts, N, d_model]
+    uint8_t* per_expert_wmma_inputs_int4;           // packed int4: [num_experts, N, d_model/2]
     __nv_fp8_e4m3* per_expert_wmma_inputs_fp8; // [num_experts, N, d_model]
     float* hidden_mlp_layer_1_out;                  // [num_experts, N, 4 * d_model]
     float* hidden_mlp_gate_out;                     // [num_experts, N, 4 * d_model]
