@@ -9,7 +9,7 @@ All kernels are based on the double buffered wmma kernel with standard tile size
 **Tensor Cores** = **TC**; **CAP** = capacity factor for per-expert buffers; 
 
 | Quant | CAP | Kernel | ms | Profile | Setup | Notes |
-|----|----|----|-------|--------|-----------|---------|-------|-------|
+|----|----|----|-------|--------|-----------|---------|
 | fp16 | No | [unfused](kernels/unfused.cu) | 2034 | [Run 1](prof/md/run1/ncu_details.md) | per-stage separate global kernels | overalloc of per-expert buffers |
 | fp16 | No | [baseline](kernels/baseline.cu) | 54 | [Run 1](prof/md/run1/ncu_details.md) | full kernel fusion with per-token routing  | as above  |
 | fp16 | Yes  | [capacity](kernels/capacity.cu) | 37.2 | [Run 1](prof/md/run1/ncu_details.md)  | capacity-aware routing |  |
