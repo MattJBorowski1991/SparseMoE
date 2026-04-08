@@ -8,7 +8,7 @@ This file consolidates the NCU high-level reports from `prof/txt/run_quant/all_n
 - `capacity_fp8_ptx`
 - `capacity_int4_ptx`
 
-The tables below preserve exact metric names, metric units, and metric values. Each comparison table groups the metrics by the same sections and order found in the source file.
+The tables below preserve exact metric names, metric units, and metric values. Each comparison table groups the metrics by the same sections and order found in the source file. 
 
 **GPU Speed Of Light Throughput**
 
