@@ -172,13 +172,13 @@ static __device__ __forceinline__ void wmma_db(
         }
 
         asm volatile("cp.async.commit_group;");
-        asm volatile("cp.async.wait_group 0;");
         // No __syncthreads() needed: each warp has its own buffer slot (warp_id-indexed)
         // and cp.async.wait_group 0 already fences this warp's async copies.
 
         // compute current 16x16 tile as two 16x8 tensor-op instructions.
         mma_m16n8k16_f32(a_regs, b_regs_lo, c_regs_lo);
         mma_m16n8k16_f32(a_regs, b_regs_hi, c_regs_hi);
+        asm volatile("cp.async.wait_group 0;");
 
         int tmp = compute_buf;
         compute_buf = stage_buf;

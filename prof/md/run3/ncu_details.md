@@ -1,4 +1,4 @@
-# Run 2 — Nsight Compute: Swizzling
+# Run 3 — Nsight Compute: Swizzling Attempt 1
 
 Kernels profiled: [capacity.cu](kernels/capacity.cu), [swizzle_xor.cu](kernels/swizzle_xor.cu) and [swizzle_ldmatrix.cu](kernels/swizzle_ldmatrix.cu).
 

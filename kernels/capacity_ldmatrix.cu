@@ -14,23 +14,39 @@ static __device__ __forceinline__ unsigned smem_addr(const void* ptr)
     return static_cast<unsigned>(__cvta_generic_to_shared(ptr));
 }
 
+
+// **** ldmatrix for A: load the full 16x16 tile into registers: each lane owns 8 elements of the tile and loads those elements to 4 uint32 registers (used later for mma.sync)
+// 
+// A: [WMMA_M][ld] half, row-major, no XOR swizzle.
+// ldmatrix.x4.m8n8 loads 4 8×8 sub-matrices; each thread provides one row pointer.
+// Mapping for linear smem:
+//   group=0 (threads  0-7 ) → rows 0-7,   cols 0-7
+//   group=1 (threads  8-15) → rows 0-7,   cols 8-15
+//   group=2 (threads 16-23) → rows 8-15,  cols 0-7
+//   group=3 (threads 24-31) → rows 8-15,  cols 8-15
+//   → group bit 1 selects row offset (0 or 8); group bit 0 selects col offset (0 or 8).
 static __device__ __forceinline__ void ldmatrix_a_m16n8k16(
     const half* tile,
     int lane_id,
     int ld,
     unsigned (&a)[4]
 )
-{
+{   
+    // each lane's pointer tell the hardward where one 16-byte (8 x 2 halves) row of smem starts
+    // the hardware reads all these 8 x 2 fp16 values and scatters them to the correct a[i] register
     int group = lane_id >> 3;
-    int row = (lane_id & 7) + ((group & 1) << 3);
-    int col = (group >> 1) << 3;
+    int row = (lane_id & 7) + ((group >> 1) << 3);  // bit 1 → row offset
+    int col = (group & 1) << 3;                       // bit 0 → col offset
     unsigned src = smem_addr(tile + row * ld + col);
     asm volatile(
-        "ldmatrix.sync.aligned.x4.m8n8.shared.b16 {%0, %1, %2, %3}, [%4];\n"
+        "ldmatrix.sync.aligned.x4.m8n8.shared.b16 {%0, %1, %2, %3}, [%4];\n"    // x4 = all four 8x8 sub-tiles (of the 16x16 tile) are loaded in one instruction by all 32 lanes cooperating
         : "=r"(a[0]), "=r"(a[1]), "=r"(a[2]), "=r"(a[3])
         : "r"(src));
 }
 
+// B: [WMMA_K][ld] half, row-major (stored [k][n]), no XOR swizzle.
+// ldmatrix.x2.trans.m8n8 loads 2 8×8 sub-matrices transposed (col-packs k-rows).
+// Threads 0-7 → rows 0-7; threads 8-15 → rows 8-15; threads 16-31 reuse 0-15 addresses.
 static __device__ __forceinline__ void ldmatrix_b_m16n8k16(
     const half* tile,
     int lane_id,
@@ -168,7 +184,6 @@ static __device__ __forceinline__ void wmma_db(
         }
 
         asm volatile("cp.async.commit_group;");
-        asm volatile("cp.async.wait_group 0;");
 
         // No __syncthreads() needed: each warp has its own buffer slot (warp_id-indexed)
         // and cp.async.wait_group 0 already fences this warp's async copies.
@@ -176,6 +191,7 @@ static __device__ __forceinline__ void wmma_db(
         // compute current tile as two 16x8 tensor-op instructions.
         mma_m16n8k16_f32(a_regs, b_regs_left, c_regs_left);
         mma_m16n8k16_f32(a_regs, b_regs_right, c_regs_right);
+        asm volatile("cp.async.wait_group 0;");
 
         int tmp = compute_buf;
         compute_buf = stage_buf;

@@ -79,7 +79,7 @@ static __device__ __forceinline__ void load_b_m8k32_fp8(
     uint32_t             b[2]
 ){
     int lane = threadIdx.x % 32;
-    int col  = n_col_base + (lane / 4) % 2;
+    int col  = n_col_base + (lane / 4);  // n-col this thread owns in [0,7]
 
     auto pack4 = [&](int k0) -> uint32_t {
         uint32_t v = 0;
@@ -90,8 +90,8 @@ static __device__ __forceinline__ void load_b_m8k32_fp8(
         return v;
     };
 
-    b[0] = pack4(0);
-    b[1] = pack4(16);
+    b[0] = pack4((lane % 4) * 4);
+    b[1] = pack4((lane % 4) * 4 + 16);
 }
 
 // ---------------------------------------------------------------------------
@@ -180,12 +180,11 @@ static __device__ __forceinline__ void wmma_db_fp8(
             asm volatile("cp.async.ca.shared.global [%0], [%1], 16;" :: "r"(smem_ptr), "l"(src));
         }
         asm volatile("cp.async.commit_group;");
-        asm volatile("cp.async.wait_group 0;");
-        __syncthreads();
 
         // compute on current tile
         ptx_mma_m16n8k32_e4m3(a, b0, D0);
         ptx_mma_m16n8k32_e4m3(a, b1, D1);
+        asm volatile("cp.async.wait_group 0;");
 
         buf = next;
         load_a_m16k32_fp8(&As8[buf][warp_id][0][0], PTX_MMA_K + PAD, a);

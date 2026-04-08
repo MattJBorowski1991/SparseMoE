@@ -124,12 +124,13 @@ static __device__ __forceinline__ void wmma_db(
         }
 
         asm volatile("cp.async.commit_group;");
-        asm volatile("cp.async.wait_group 0;");
         // No __syncthreads() needed: each warp has its own buffer slot (warp_id-indexed)
         // and cp.async.wait_group 0 already fences this warp's async copies.
 
         // compute current tile
         wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+
+        asm volatile("cp.async.wait_group 0;");
 
         // Unswizzle staged tiles back to linear layout expected by wmma::load_matrix_sync.
         for (int i = lane_id; i < WMMA_M * WMMA_K; i += THREADS_PER_WARP) {

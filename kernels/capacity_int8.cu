@@ -77,10 +77,9 @@ static __device__ __forceinline__ void wmma_db_fp16(
             asm volatile("cp.async.ca.shared.global [%0], [%1], 16;" :: "r"(smem_ptr), "l"(src));
         }
         asm volatile("cp.async.commit_group;");
-        asm volatile("cp.async.wait_group 0;");
-        __syncthreads();
 
         wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+        asm volatile("cp.async.wait_group 0;");
 
         buf = next;
         wmma::load_matrix_sync(a_frag, &As[buf][warp_id][0][0], WMMA_K + PAD);
@@ -194,11 +193,11 @@ static __device__ __forceinline__ void wmma_db_int8(
 //   Replaces assign_per_expert_wmma_inputs + does quantization.
 // ---------------------------------------------------------------------------
 static __device__ __forceinline__ void quantize_and_assign_per_expert_inputs(
-    const half* __restrict__  input,
-    const int*  __restrict__  expert_counts,
-    const int*  __restrict__  expert_token_ids,
-    int8_t*     __restrict__  per_expert_wmma_inputs,
-    float                     scale_input_act,
+    const half* __restrict__  input,                     // [N, d_model]
+    const int*  __restrict__  expert_counts,             // [num_experts]
+    const int*  __restrict__  expert_token_ids,          // [num_experts, CAP]
+    int8_t*     __restrict__  per_expert_wmma_inputs,    // [num_expert, CAP, d_model]
+    float                     scale_input_act,          
     int                       CAP
 ){
     const int batch = blockIdx.z;
@@ -210,17 +209,18 @@ static __device__ __forceinline__ void quantize_and_assign_per_expert_inputs(
     const int tid     = threadIdx.x;
     const int warp_id = tid / THREADS_PER_WARP;
     const int lane_id = tid % THREADS_PER_WARP;
-    const int row_id  = blockIdx.x * WARPS_PER_BLOCK + warp_id;
-    if (row_id >= num_experts * CAP) return;
 
-    const int expert_id = row_id / CAP;
-    const int slot      = row_id % CAP;
-    const int row_base  = row_id * d_model;
+    const int per_expert_token_id  = blockIdx.x * WARPS_PER_BLOCK + warp_id;
+    if (per_expert_token_id >= num_experts * CAP) return;
+
+    const int expert_id = per_expert_token_id / CAP;
+    const int slot      = per_expert_token_id % CAP;
+    const int row_base  = per_expert_token_id * d_model;
 
     if (slot < expert_counts_b[expert_id]) {
-        const int token_id = expert_token_ids_b[expert_id * CAP + slot];
-        if (token_id >= 0 && token_id < N) {
-            const int in_base = token_id * d_model;
+        const int expert_token_id = expert_token_ids_b[expert_id * CAP + slot];
+        if (expert_token_id >= 0 && expert_token_id < N) {
+            const int in_base = expert_token_id * d_model;
             for (int col = lane_id; col < d_model; col += THREADS_PER_WARP) {
                 float val = __half2float(input_b[in_base + col]);
                 per_expert_b[row_base + col] = (int8_t)__float2int_rn(
@@ -248,9 +248,9 @@ static __device__ __forceinline__ void quantize_and_assign_per_expert_inputs(
 //   Strategy: pass int32 global scratch for up and gate, fuse in this kernel.
 // ---------------------------------------------------------------------------
 static __device__ __forceinline__ void silu_and_requant(
-    const int32_t* __restrict__ up_int32,       // [num_experts, CAP, 4*d_model]
-    const int32_t* __restrict__ gate_int32,     // [num_experts, CAP, 4*d_model]
-    int8_t*        __restrict__ out_int8,        // [num_experts, CAP, 4*d_model]
+    const int32_t* __restrict__ up_int32,       // [num_experts, CAP, up_proj_dim * d_model]
+    const int32_t* __restrict__ gate_int32,     // [num_experts, CAP, up_proj_dim * d_model]
+    int8_t*        __restrict__ out_int8,        // [num_experts, CAP, up_proj_dim * d_model] = hidden_mlp_int8, fed later into down_proj wmma
     float scale_input_act,
     float scale_up_w,
     float scale_gate_w,
@@ -291,37 +291,41 @@ static __device__ __forceinline__ void top_k_gating(
     int*   max_idxs
 ){
     int batch = blockIdx.z;
-    const float* logits_batch                 = logits + batch * N * num_experts;
+    const float* logits_b                 = logits + batch * N * num_experts;
     int*         selected_expert_indices_b    = selected_expert_indices + batch * N * k;
     float*       selected_expert_weights_b    = selected_expert_weights + batch * N * k;
 
     const int tid     = threadIdx.x;
     const int warp_id = tid / THREADS_PER_WARP;
     const int lane_id = tid % THREADS_PER_WARP;
+
     const int token_id = blockIdx.x * WARPS_PER_BLOCK + warp_id;
     if (token_id >= N) return;
 
-    float* warp_max_vals = max_vals  + warp_id * k;
-    int*   warp_max_idxs = max_idxs  + warp_id * k;
-    const float* logits_row = logits_batch + token_id * num_experts;
+    float* per_token_max_k_logits = max_vals  + warp_id * k;            // one warp owns one token's max k values of the logits for the purpose of expert selection
+    int*   per_token_max_k_logits_ids = max_idxs  + warp_id * k;
+    const float* per_token_logits = logits_b + token_id * num_experts;  // [num_experts]
 
     if (lane_id == 0) {
-        for (int i = 0; i < k; ++i) { warp_max_vals[i] = -1e20f; warp_max_idxs[i] = -1; }
+
+        for (int i = 0; i < k; ++i) { per_token_max_k_logits[i] = -1e20f; per_token_max_k_logits_ids[i] = -1; }
+
         for (int logit_id = 0; logit_id < num_experts; ++logit_id) {
-            float val = logits_row[logit_id];
-            if (val > warp_max_vals[k - 1]) {
-                warp_max_vals[k - 1] = val; warp_max_idxs[k - 1] = logit_id;
-                for (int i = k - 1; i > 0 && warp_max_vals[i] > warp_max_vals[i - 1]; --i) {
-                    float tv = warp_max_vals[i-1]; warp_max_vals[i-1] = warp_max_vals[i]; warp_max_vals[i] = tv;
-                    int   ti = warp_max_idxs[i-1]; warp_max_idxs[i-1] = warp_max_idxs[i]; warp_max_idxs[i] = ti;
+            float val = per_token_logits[logit_id];
+            if (val > per_token_max_k_logits[k - 1]) {
+                per_token_max_k_logits[k - 1] = val; 
+                per_token_max_k_logits_ids[k - 1] = logit_id;
+                for (int i = k - 1; i > 0 && per_token_max_k_logits[i] > per_token_max_k_logits[i - 1]; --i) {
+                    float tv = per_token_max_k_logits[i-1]; per_token_max_k_logits[i-1] = per_token_max_k_logits[i]; per_token_max_k_logits[i] = tv;
+                    int   ti = per_token_max_k_logits_ids[i-1]; per_token_max_k_logits_ids[i-1] = per_token_max_k_logits_ids[i]; per_token_max_k_logits_ids[i] = ti;
                 }
             }
         }
-        float max_val = warp_max_vals[0], sum_of_exps = 0.0f;
-        for (int l = 0; l < k; ++l) sum_of_exps += expf(warp_max_vals[l] - max_val);
+        float max_val = per_token_max_k_logits[0], sum_of_exps = 0.0f;
+        for (int l = 0; l < k; ++l) sum_of_exps += expf(per_token_max_k_logits[l] - max_val);
         for (int l = 0; l < k; ++l) {
-            selected_expert_indices_b[token_id * k + l]  = warp_max_idxs[l];
-            selected_expert_weights_b[token_id * k + l]  = expf(warp_max_vals[l] - max_val) / (sum_of_exps + 1e-10f);
+            selected_expert_indices_b[token_id * k + l]  = per_token_max_k_logits_ids[l];
+            selected_expert_weights_b[token_id * k + l]  = expf(per_token_max_k_logits[l] - max_val) / (sum_of_exps + 1e-10f);
         }
     }
 }
@@ -330,33 +334,33 @@ static __device__ __forceinline__ void top_k_gating(
 // build_per_expert_buffers — unchanged
 // ---------------------------------------------------------------------------
 static __device__ __forceinline__ void build_per_expert_buffers(
-    const int*   __restrict__ selected_expert_indices,
-    const float* __restrict__ selected_expert_weights,
-    int*         __restrict__ expert_counts,
-    int*         __restrict__ expert_token_ids,
-    float*       __restrict__ expert_token_weights,
+    const int*   __restrict__ selected_expert_indices,          // [N, k]
+    const float* __restrict__ selected_expert_weights,          // [N, k]
+    int*         __restrict__ expert_counts,                    // [num_experts] - here the number of times a given expert was selected will be counted with atomicAdd
+    int*         __restrict__ expert_token_ids,                 // [num_experts, CAP]
+    float*       __restrict__ expert_token_weights,             // [num_experts, CAP]
     int CAP
 ){
     const int batch = blockIdx.z;
-    const int* sel_idx_b  = selected_expert_indices  + batch * N * k;
-    const float* sel_w_b  = selected_expert_weights  + batch * N * k;
-    int*   counts_b       = expert_counts            + batch * num_experts;
-    int*   tok_ids_b      = expert_token_ids         + batch * num_experts * CAP;
-    float* tok_w_b        = expert_token_weights     + batch * num_experts * CAP;
+    const int* selected_expert_indices_b  = selected_expert_indices  + batch * N * k;
+    const float* selected_expert_weights_b  = selected_expert_weights  + batch * N * k;
+    int*   expert_counts_b       = expert_counts            + batch * num_experts;
+    int*   expert_token_ids_b      = expert_token_ids         + batch * num_experts * CAP;
+    float* expert_token_weights_b        = expert_token_weights     + batch * num_experts * CAP;
 
     const int tid = threadIdx.x, warp_id = tid / THREADS_PER_WARP, lane_id = tid % THREADS_PER_WARP;
-    const int warp_linear = blockIdx.x * WARPS_PER_BLOCK + warp_id;
-    const int warp_stride = gridDim.x  * WARPS_PER_BLOCK;
+    const int per_grid_warp_id = blockIdx.x * WARPS_PER_BLOCK + warp_id;
+    const int WARPS_PER_GRID = gridDim.x  * WARPS_PER_BLOCK;
 
-    for (int route_id = warp_linear; route_id < N * k; route_id += warp_stride) {
+    for (int i = per_grid_warp_id; i < N * k; i += WARPS_PER_GRID) {
         if (lane_id == 0) {
-            const int token_id  = route_id / k;
-            const int expert_id = sel_idx_b[route_id];
+            const int token_id  = i / k;
+            const int expert_id = selected_expert_indices_b[i];
             if (expert_id >= 0 && expert_id < num_experts) {
-                const int slot = atomicAdd(&counts_b[expert_id], 1);
+                const int slot = atomicAdd(&expert_counts_b[expert_id], 1);
                 if (slot < CAP) {
-                    tok_ids_b[expert_id * CAP + slot] = token_id;
-                    tok_w_b  [expert_id * CAP + slot] = sel_w_b[route_id];
+                    expert_token_ids_b[expert_id * CAP + slot] = token_id;
+                    expert_token_weights_b[expert_id * CAP + slot] = selected_expert_weights_b[i];
                 }
             }
         }
@@ -368,11 +372,11 @@ static __device__ __forceinline__ void build_per_expert_buffers(
 // ---------------------------------------------------------------------------
 static __device__ __forceinline__ void clamp_expert_counts(int* __restrict__ expert_counts, int CAP){
     const int batch  = blockIdx.z;
-    int* counts_b    = expert_counts + batch * num_experts;
-    const int global_tid    = blockIdx.x * blockDim.x + threadIdx.x;
+    int* expert_counts_b    = expert_counts + batch * num_experts;
+    const int gid    = blockIdx.x * blockDim.x + threadIdx.x;
     const int global_stride = gridDim.x  * blockDim.x;
-    for (int idx = global_tid; idx < num_experts; idx += global_stride) {
-        if (counts_b[idx] > CAP) counts_b[idx] = CAP;
+    for (int idx = gid; idx < num_experts; idx += global_stride) {
+        if (expert_counts_b[idx] > CAP) expert_counts_b[idx] = CAP;
     }
 }
 
@@ -392,34 +396,33 @@ static __device__ __forceinline__ void combine(
 ){
     const int batch = blockIdx.z;
     const float dequant = scale_mid_act * scale_down_w;
-    const int rows_per_expert = CAP;
 
-    const int32_t* input_b       = input              + batch * num_experts * rows_per_expert * d_model;
-    const int*     tok_ids_b     = expert_token_ids   + batch * num_experts * rows_per_expert;
-    const float*   tok_w_b       = expert_token_weights + batch * num_experts * rows_per_expert;
-    const int*     counts_b      = expert_counts       + batch * num_experts;
-    float*         final_b       = final_output        + batch * N * d_model;
+    const int32_t* input_b       = input              + batch * num_experts * CAP * d_model;
+    const int*     expert_token_ids_b     = expert_token_ids   + batch * num_experts * CAP;
+    const float*   expert_token_weights_b       = expert_token_weights + batch * num_experts * CAP;
+    const int*     expert_counts_b      = expert_counts       + batch * num_experts;
+    float*         final_output_b       = final_output        + batch * N * d_model;
 
     const int tid     = threadIdx.x;
     const int warp_id = tid / THREADS_PER_WARP;
     const int lane_id = tid % THREADS_PER_WARP;
-    const int row_id  = blockIdx.x * WARPS_PER_BLOCK + warp_id;
-    if (row_id >= num_experts * rows_per_expert) return;
+    const int per_expert_token_id  = blockIdx.x * WARPS_PER_BLOCK + warp_id;
+    if (per_expert_token_id >= num_experts * CAP) return;
 
-    const int expert_id = row_id / rows_per_expert;
-    const int slot      = row_id % rows_per_expert;
-    if (slot >= counts_b[expert_id]) return;
+    const int expert_id = per_expert_token_id / CAP;
+    const int slot      = per_expert_token_id % CAP;
+    if (slot >= expert_counts_b[expert_id]) return;
 
-    const int token_id    = tok_ids_b[expert_id * rows_per_expert + slot];
+    const int token_id    = expert_token_ids_b[expert_id * CAP + slot];
     if (token_id < 0 || token_id >= N) return;
 
-    const float route_weight    = tok_w_b[expert_id * rows_per_expert + slot];
-    const int   expert_row_base = row_id  * d_model;
-    const int   token_row_base  = token_id * d_model;
+    const float weight    = expert_token_weights_b[expert_id * CAP + slot];
+    const int   per_expert_token_row_start = per_expert_token_id  * d_model;
+    const int   token_row_start  = token_id * d_model;
 
     for (int col = lane_id; col < d_model; col += THREADS_PER_WARP) {
-        float val = (float)input_b[expert_row_base + col] * dequant;
-        atomicAdd(&final_b[token_row_base + col], route_weight * val);
+        float val = (float)input_b[per_expert_token_row_start + col] * dequant;
+        atomicAdd(&final_output_b[token_row_start + col], weight * val);
     }
 }
 
@@ -433,34 +436,36 @@ static __device__ __forceinline__ void zero_final_output_and_expert_counts(
     const int batch = blockIdx.z;
     if (blockIdx.y != 0) return;
 
-    float* final_b  = final_output  + batch * N * d_model;
-    int*   counts_b = expert_counts + batch * num_experts;
+    float* final_output_b  = final_output  + batch * N * d_model;
+    int*   expert_counts_b = expert_counts + batch * num_experts;
 
     const int global_tid    = blockIdx.x * blockDim.x + threadIdx.x;
     const int global_stride = gridDim.x  * blockDim.x;
 
     for (int idx = global_tid; idx < num_experts; idx += global_stride)
-        counts_b[idx] = 0;
+        expert_counts_b[idx] = 0;
     for (int idx = global_tid; idx < N * d_model; idx += global_stride)
-        final_b[idx] = 0.0f;
+        final_output_b[idx] = 0.0f;
 }
 
 // ---------------------------------------------------------------------------
 // Main kernel
 // ---------------------------------------------------------------------------
 __global__ void capacity(MoEArgs args){
-
+    
+    // all quantized weights and scales calculated offline
     const half*    input                   = args.input;
     const half*    router_weights          = args.router_weights;
     const int8_t*  expert_up_proj_weights  = args.expert_up_proj_weights_int8;
     const int8_t*  expert_gate_proj_weights= args.expert_gate_proj_weights_int8;
     const int8_t*  expert_down_proj_weights= args.expert_down_proj_weights_int8;
 
-    const float scale_up_w        = args.scale_up_w;
-    const float scale_gate_w      = args.scale_gate_w;
-    const float scale_down_w      = args.scale_down_w;
-    const float scale_input_act   = args.scale_input_act;
-    const float scale_mid_act     = args.scale_mid_act;
+    const float scale_up_w        = args.scale_up_w; // scale for up‑projection weights (how weight int8 values map back to FP for dequant)
+    const float scale_gate_w      = args.scale_gate_w; // scale for the gate weights (that provide the input to SiLU)
+    const float scale_down_w      = args.scale_down_w; // scale for down‑projection weights (used when dequantizing down_proj int32 → FP in the final combine).
+    const float scale_input_act   = args.scale_input_act; // scale for fp32->in8 input activations i.e. the output of the router layer
+    const float scale_mid_act     = args.scale_mid_act; // scale for requantizing the output of Swiglu (=elementwise mul between up and SiLU(gate)) to int8 before down_proj
+    // Note : there is no separate scale for SiLU(gate), the gate is dequantized before fed to SiLU
 
     float*     expert_logits          = args.expert_logits;
     int*       selected_expert_indices= args.selected_expert_indices;
@@ -473,7 +478,7 @@ __global__ void capacity(MoEArgs args){
     float*     final_output           = args.final_output;
 
     // Scratch int32 buffers: reuse host-allocated storage.
-    // Host must allocate two int32 buffers of size [num_batches, num_experts, CAP, 4*d_model]
+    // Host must allocate two int32 buffers of size [num_batches, num_experts, CAP, up_proj_dim * d_model]
     // and one of size [num_batches, num_experts, CAP, d_model] and pass via args (see note).
     // For clarity cast from the host-side int32* fields (add to MoEArgs if needed):
     int32_t* up_int32   = reinterpret_cast<int32_t*>(args.hidden_mlp_layer_1_out);  // repurposed

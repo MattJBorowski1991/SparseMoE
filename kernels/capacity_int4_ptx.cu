@@ -11,7 +11,9 @@ using namespace nvcuda;
 
 constexpr int PTX_MMA_K_INT4 = 64;
 
-// Host-side requirement: transpose and pack weight matrices to [N/2][K/2] layout before uploading.
+// Host-side requirement: transpose and pack weight matrices to [N/2][K] layout before uploading.
+// B packs along the N dimension (2 adjacent N-cols per byte, one byte per K-position),
+// so each transposed row is K bytes wide (not K/2).
 
 // Packed = 2 int4 values stored in 1 byte (one per nibble=4bits (low nibble = bits 3:0, high nibble = bits 7:4)). 
 // Unpacked = 1 int4 value stored in 1 byte (wasting the upper 4 bits).
@@ -83,12 +85,13 @@ static __device__ __forceinline__ void load_a_m16k64_s4(
 //   we can read a uint32 by transposing: use ldA-style read along k if
 //   we store B transposed. Instead, keep B as [K][N/2] and do 4 byte reads
 //   with __byte_perm — still scalar but only 4 ops not 8.
-//   Best: store B as [N/2][K] (transposed) so k is contiguous → 1 uint32 read.
-//   We transpose B on host. Then ldB = K/2 bytes per row.
+//   Best: store B as [N/2][K] (transposed) so k is contiguous.
+//   B packs along N: each byte holds 1 K-position × 2 N-cols (low nibble=even, high nibble=odd).
+//   We transpose B on host. Then ldB = K bytes per row (one byte per K-position, NOT K/2).
 // ---------------------------------------------------------------------------
 static __device__ __forceinline__ void load_b_m8k64_s4_transposed(
-    const uint8_t* tile,       // [WMMA_N/2][PTX_MMA_K_INT4/2] B transposed, packed int4
-    int            ldB,        // = PTX_MMA_K_INT4/2 (bytes per row = 32)
+    const uint8_t* tile,       // [WMMA_N/2][PTX_MMA_K_INT4] B transposed, packed int4
+    int            ldB,        // = PTX_MMA_K_INT4 (bytes per row = 64)
     int            n_col_base, // 0 or 8 (logical nibble col base)
     uint32_t       b[2]
 ){
@@ -104,11 +107,11 @@ static __device__ __forceinline__ void load_b_m8k64_s4_transposed(
     int k_byte_off = (lane % 4) * 4;  // NOT used for b — b is col-indexed
 
     // For B col-major: we need 8 consecutive k-rows for one n-col.
-    // With B stored as [N/2][K/2] transposed:
+    // With B stored as [N/2][K] transposed (one byte per K-position):
     //   row = byte_row (selects the n-col pair)
-    //   within that row, k-half 0 = bytes [0..15], k-half 1 = bytes [16..31]
-    // Thread reads 4 bytes = 8 nibbles covering k-cols 0..31 (first half)
-    // which nibble-group? determined by lane%4
+    //   within that row, k-half 0 = bytes [0..31], k-half 1 = bytes [32..63]
+    // Lane%4 selects which 4-byte chunk within each k-half (4 lanes × 4 bytes = 16 bytes per half).
+    // raw0+raw1 cover k-half 0; raw2+raw3 cover k-half 1.
     const uint8_t* row_ptr = &tile[byte_row * ldB];
 
     uint32_t raw0 = *reinterpret_cast<const uint32_t*>(&row_ptr[k_byte_off]);
@@ -168,7 +171,7 @@ static __device__ __forceinline__ void load_b_m8k64_s4_transposed(
 template<bool calculatePerExpert>
 static __device__ __forceinline__ void wmma_db_int4(
     const uint8_t* A,          // packed int4 activations [M][K/2]
-    const uint8_t* B,          // packed int4 weights, B-transposed [N/2][K/2] per expert
+    const uint8_t* B,          // packed int4 weights, B-transposed [N/2][K] per expert
     int32_t*       C_global,
     int M, int N, int K,
     int tile_row_in,
@@ -182,7 +185,7 @@ static __device__ __forceinline__ void wmma_db_int4(
     int lane_id = tid % THREADS_PER_WARP;
 
     const int K2 = K / 2;   // packed byte width of A rows
-    const int N2 = N / 2;   // packed byte width of B (transposed) rows
+    const int N2 = N / 2;   // number of B-transposed rows (N-col pairs)
 
     const uint8_t* A_batch = A + batch * M * K2;
     const uint8_t* B_batch = B;
@@ -196,17 +199,17 @@ static __device__ __forceinline__ void wmma_db_int4(
         const int expert_id       = tile_row_in / rows_per_expert;
         tile_row_local            = tile_row_in % rows_per_expert;
         A_e = A_batch + expert_id * rows_per_expert * K2;
-        // B transposed: [N/2][K/2] per expert
-        B_e = B_batch + expert_id * N2 * K2;
+        // B transposed: [N/2][K] per expert — K bytes per row (one byte per K-position)
+        B_e = B_batch + expert_id * N2 * K;
     } else {
         A_e = A_batch;
         B_e = B_batch;
     }
 
-    // A smem: [WMMA_M][K_INT4/2 + PAD] packed int4 — 16*32 = 512 bytes per warp
-    // B smem: [WMMA_N/2][K_INT4/2 + PAD] transposed packed int4 — 8*32 = 256 bytes per warp
+    // A smem: [WMMA_M][K_INT4/2 + PAD] packed int4 — 16*32 = 512 bytes per warp  (A packs along K: 2 int4/byte)
+    // B smem: [WMMA_N/2][K_INT4 + PAD] transposed packed int4 — 8*64 = 512 bytes per warp  (B packs along N: 1 byte/K-pos)
     constexpr int A_ROW_BYTES = PTX_MMA_K_INT4 / 2 + PAD;  // 32
-    constexpr int B_ROW_BYTES = PTX_MMA_K_INT4 / 2 + PAD;  // 32
+    constexpr int B_ROW_BYTES = PTX_MMA_K_INT4 + PAD;       // 64
 
     __shared__ __align__(16) uint8_t As[2][WARPS_PER_BLOCK][WMMA_M][A_ROW_BYTES];
     __shared__ __align__(16) uint8_t Bs[2][WARPS_PER_BLOCK][WMMA_N / 2][B_ROW_BYTES];
@@ -231,18 +234,17 @@ static __device__ __forceinline__ void wmma_db_int4(
         unsigned smem_ptr = __cvta_generic_to_shared(dst);
         asm volatile("cp.async.ca.shared.global [%0], [%1], 16;" :: "r"(smem_ptr), "l"(src));
     }
-    // B tile (transposed): (WMMA_N/2) * B_ROW_BYTES = 8 * 32 = 256 bytes
+    // B tile (transposed): (WMMA_N/2) * B_ROW_BYTES = 8 * 64 = 512 bytes
     // load tile_col_in/2 .. tile_col_in/2 + WMMA_N/2 rows of B-transposed
     for (int i = lane_id * 16; i < (WMMA_N / 2) * B_ROW_BYTES; i += 32 * 16) {
         int row = i / B_ROW_BYTES, col = i % B_ROW_BYTES;
         char*       dst = (char*)&Bs[buf][warp_id][row][col];
-        const char* src = (const char*)&B_e[(tile_col_in / 2 + row) * K2 + col];
+        const char* src = (const char*)&B_e[(tile_col_in / 2 + row) * K + col];
         unsigned smem_ptr = __cvta_generic_to_shared(dst);
         asm volatile("cp.async.ca.shared.global [%0], [%1], 16;" :: "r"(smem_ptr), "l"(src));
     }
     asm volatile("cp.async.commit_group;");
     asm volatile("cp.async.wait_group 0;");
-    __syncthreads();
 
     uint32_t a[4], b0[2], b1[2];
     load_a_m16k64_s4        (&As[buf][warp_id][0][0],  A_ROW_BYTES, a);
@@ -264,16 +266,16 @@ static __device__ __forceinline__ void wmma_db_int4(
         for (int i = lane_id * 16; i < (WMMA_N / 2) * B_ROW_BYTES; i += 32 * 16) {
             int row = i / B_ROW_BYTES, col = i % B_ROW_BYTES;
             char*       dst = (char*)&Bs[next][warp_id][row][col];
-            const char* src = (const char*)&B_e[(tile_col_in / 2 + row) * K2 + k_off2 + col];
+            const char* src = (const char*)&B_e[(tile_col_in / 2 + row) * K + k_off + col];
             unsigned smem_ptr = __cvta_generic_to_shared(dst);
             asm volatile("cp.async.ca.shared.global [%0], [%1], 16;" :: "r"(smem_ptr), "l"(src));
         }
         asm volatile("cp.async.commit_group;");
-        asm volatile("cp.async.wait_group 0;");
         __syncthreads();
 
         ptx_mma_m16n8k64_s4s4(a, b0, D0);
         ptx_mma_m16n8k64_s4s4(a, b1, D1);
+        asm volatile("cp.async.wait_group 0;");
 
         buf = next;
         load_a_m16k64_s4        (&As[buf][warp_id][0][0], A_ROW_BYTES, a);

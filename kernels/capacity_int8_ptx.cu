@@ -11,6 +11,9 @@ using namespace nvcuda;
 
 constexpr int PTX_MMA_K = 32;
 
+// ******** one warp produces a 16x16 C tile in two chunks: left n8 (16x8) and right n8 (16x8) ********
+
+
 // ---------------------------------------------------------------------------
 // PTX mma.sync constants for int8 on sm_89 (Ada):
 //   shape:      m16n8k32
@@ -35,8 +38,8 @@ constexpr int PTX_MMA_K = 32;
 
 // ---------------------------------------------------------------------------
 // ptx_mma_m16n8k32_s8: one m16n8k32 int8->int32 mma.sync
-//   a[4]:  4x uint32 (packed A, 16 int8 each warp-lane owns)
-//   b[4]:  4x uint32 (packed B)
+//   a[4]:  4x uint32 = 4x (4x int8) = 16 elems of A = packed A = owned by one lane
+//   b[2]:  2x uint32 = 2x (4x int8) = 8 elems of B = packed B
 //   c[4]:  4x int32  accumulator in, updated in place
 // ---------------------------------------------------------------------------
 static __device__ __forceinline__ void ptx_mma_m16n8k32_s8(
@@ -44,20 +47,24 @@ static __device__ __forceinline__ void ptx_mma_m16n8k32_s8(
     const uint32_t b[2],
     int32_t        c[4]
 ){
-    asm volatile(
-        "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 "
-        "{%0,%1,%2,%3}, "
-        "{%4,%5,%6,%7}, "
-        "{%8,%9}, "
-        "{%0,%1,%2,%3};"
-        : "+r"(c[0]), "+r"(c[1]), "+r"(c[2]), "+r"(c[3])
+    asm volatile(   // issue one wmma via mma.sync & tie compiler registers to ptx operands so results accumulates into c[]
+        "mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 " 
+        // row.col == A is row-major, B is col-major. this affects how packed bytes map into operand registers
+        // s32.s8.s8.s32 = types for DABC, where D = A@B + C; D=destination, C=accumulator. s32 = signed 32-bit.
+        "{%0,%1,%2,%3}, "   // D registers = 4 x 32-bit regs
+        "{%4,%5,%6,%7}, "   // A registers = 4 x 32-bit regs
+        "{%8,%9}, "         // B registers = 2 x 32-bit regs
+        "{%0,%1,%2,%3};"    // C registers (same as for D!)
+        : "+r"(c[0]), "+r"(c[1]), "+r"(c[2]), "+r"(c[3])    // "+r" = read and write to a general-purpose register
         :  "r"(a[0]),  "r"(a[1]),  "r"(a[2]),  "r"(a[3]),
            "r"(b[0]),  "r"(b[1])
     );
 }
 
+// *** Load A tile the way mma.sync expects ***
 // ---------------------------------------------------------------------------
-// load_a_m16k32: load A tile (16x32 int8, row-major) into 4 uint32 registers
+// load_a_m16k32: load A tile (16x32 int8, row-major) into 4 uint32 registers (per lane)
+// all 32 lanes cover the full tile
 //   smem ptr: points to [WMMA_M][WMMA_K] int8 tile for this warp
 //   Each thread in the warp owns a specific row/col set per PTX layout rules:
 //     thread groups of 4, each group covers 2 rows x 16 cols
@@ -77,13 +84,34 @@ static __device__ __forceinline__ void load_a_m16k32(
     int row1 = row0 + 1;
     int col  = (lane % 4) * 4;  // 4 consecutive int8 → 1 uint32
 
-    // first k-half (cols 0..15)
+    // vectorized (uint32_t) load
+    // load the 4x4 = 16 int8s into packs of 4 = 4 x uint32s
+    
+    // left half of A (cols 0..15)
     a[0] = *reinterpret_cast<const uint32_t*>(&tile[row0 * ldA + col]);
     a[2] = *reinterpret_cast<const uint32_t*>(&tile[row1 * ldA + col]);
-    // second k-half (cols 16..31)
+    // right half of A (cols 16..31)
     a[1] = *reinterpret_cast<const uint32_t*>(&tile[row0 * ldA + col + 16]);
     a[3] = *reinterpret_cast<const uint32_t*>(&tile[row1 * ldA + col + 16]);
+
+    //e.g.
+    // // I. for lane=0:
+    // a[0] holds elems (0,0), .. (0,3)
+    // a[2] holds elems (1,0),.. (1,3)
+    // a[1] holds elems (0,16), .. (0, 19)
+    // a[3] holds elems (1,16), .. (1, 19)
+
+    // // II. for lane=1:
+    // a[0] holds elems (0,4), .. (0,7)
+    // a[2] holds elems (1,4),.. (1,7)
+    // a[1] holds elems (0,20), .. (0, 23)
+    // a[3] holds elems (1,20), .. (1, 23)
+
+
 }
+
+
+// *** Load B tile the way mma.sync expects ***
 
 // ---------------------------------------------------------------------------
 // load_b_m8k32: load B tile (32x8 int8, col-major) into 4 uint32 registers
@@ -91,10 +119,8 @@ static __device__ __forceinline__ void load_a_m16k32(
 //   packing. B stored in smem as [WMMA_K][WMMA_N+PAD] row-major (as before),
 //   so we read col-major on the fly.
 //   PTX layout for B (k32n8, col-major):
-//     b[0]: rows  0-3, col (lane%4)*2+n_off   packed
-//     b[1]: rows 16-19,col (lane%4)*2+n_off   packed
-//     b[2]: rows  8-11,col (lane%4)*2+n_off   packed  (interleaved per spec)
-//     b[3]: rows 24-27,col (lane%4)*2+n_off   packed
+//     b[0]: rows (lane%4)*4 .. (lane%4)*4+3,    col n_col_base+(lane/4)  packed
+//     b[1]: rows (lane%4)*4+16 .. (lane%4)*4+19, col n_col_base+(lane/4)  packed
 //   n_col_base: 0 for first n8, 8 for second n8
 // ---------------------------------------------------------------------------
 static __device__ __forceinline__ void load_b_m8k32(
@@ -104,21 +130,37 @@ static __device__ __forceinline__ void load_b_m8k32(
     uint32_t      b[2]
 ){
     int lane = threadIdx.x % 32;
-    int col  = n_col_base + (lane / 4) % 2;  // n-col this thread owns in [0,7]
+    int col  = n_col_base + (lane / 4);  // n-col this thread owns in [0,7]
 
     // pack 4 k-rows into one uint32 (int8x4)
-    // k-row ordering per PTX m16n8k32 B col-major spec:
+    // k-row ordering per PTX m16n8k32 B col-major spec
+    // col below is fixed and rows vary as we need to perform col-major packing for B (as PTX requires)
+    // "read col-major on the fly"
     auto pack4 = [&](int k0) -> uint32_t {
         uint32_t v = 0;
-        v |= ((uint32_t)(uint8_t)tile[(k0+0)*ldB + col]);
+        // GOAL: pack 4 separate bytes (single int8) into on 32-bit register (thats what mma.sync consumes/requires)
+        // (the below 4 bytes are ldB-bytes apart. if they were contiguous we could just use single: v = *reinterpret_cast<const uint32_t*>(&tile[k0 * ldB + col]);)
+        // Visually:
+        // uint32:  [byte3][byte2][byte1][byte0]   ← bits 31..0
+        //           <<24   <<16   <<8    <<0
+        v |= ((uint32_t)(uint8_t)tile[(k0+0)*ldB + col]); // "a|=b" == "a = (a|b)" == places each byte in its slot == bitwise OR == compare bits of a and b and return 1 if at least one of the bits is one = return 0 only if both are 0
         v |= ((uint32_t)(uint8_t)tile[(k0+1)*ldB + col]) << 8;
         v |= ((uint32_t)(uint8_t)tile[(k0+2)*ldB + col]) << 16;
         v |= ((uint32_t)(uint8_t)tile[(k0+3)*ldB + col]) << 24;
         return v;
     };
 
-    b[0] = pack4(0);
-    b[1] = pack4(16);
+    b[0] = pack4((lane % 4) * 4);
+    b[1] = pack4((lane % 4) * 4 + 16);
+    // lane%4 selects 4-row group: 0->rows 0-3, 1->rows 4-7, 2->rows 8-11, 3->rows 12-15 (+ 16 for b[1])
+    // lane/4 selects n-col: 0->col0, 1->col1, ..., 7->col7
+    // hence:
+    // lane0 packs in col0: rows 0-3 and 16-19 (into b[0] and b[1] as two int32 4-packs of int8s)
+    // lane1 packs in col0: rows 4-7 and 20-23
+    // lane2 packs in col0: rows 8-11 and 24-27
+    // lane3 packs in col0: rows 12-15 and 28-31
+    // lane4 packs in col1: rows 0-3 and 16-19
+    // etc
 }
 
 // ---------------------------------------------------------------------------
@@ -189,31 +231,30 @@ static __device__ __forceinline__ void wmma_db_int8(
     load_b_m8k32  (&Bs8[buf][warp_id][0][0], WMMA_N + PAD, 8, b1);
 
     // --- main loop ---
-    for (int k_off = PTX_MMA_K; k_off < K; k_off += PTX_MMA_K) {
+    for (int k = PTX_MMA_K; k < K; k += PTX_MMA_K) {
         int next = 1 - buf;
 
         // async load next tile
-        for (int i = lane_id * 16; i < WMMA_M * PTX_MMA_K; i += 32 * 16) {
+        for (int i = lane_id * 16; i < WMMA_M * PTX_MMA_K; i += THREADS_PER_WARP * 16) {
             int row = i / PTX_MMA_K, col = i % PTX_MMA_K;
             char*       dst = (char*)&As8[next][warp_id][row][col];
-            const char* src = (const char*)&A_e[(tile_row_local + row) * K + (k_off + col)];
+            const char* src = (const char*)&A_e[(tile_row_local + row) * K + (k + col)];
             unsigned smem_ptr = __cvta_generic_to_shared(dst);
             asm volatile("cp.async.ca.shared.global [%0], [%1], 16;" :: "r"(smem_ptr), "l"(src));
         }
         for (int i = lane_id * 16; i < PTX_MMA_K * WMMA_N; i += THREADS_PER_WARP * 16) {
             int row = i / WMMA_N, col = i % WMMA_N;
             char*       dst = (char*)&Bs8[next][warp_id][row][col];
-            const char* src = (const char*)&B_e[(k_off + row) * N + (tile_col_in + col)];
+            const char* src = (const char*)&B_e[(k + row) * N + (tile_col_in + col)];
             unsigned smem_ptr = __cvta_generic_to_shared(dst);
             asm volatile("cp.async.ca.shared.global [%0], [%1], 16;" :: "r"(smem_ptr), "l"(src));
         }
         asm volatile("cp.async.commit_group;");
-        asm volatile("cp.async.wait_group 0;");
-        __syncthreads();
 
         // compute on current tile (two m16n8k32 ops)
         ptx_mma_m16n8k32_s8(a, b0, D0);
         ptx_mma_m16n8k32_s8(a, b1, D1);
+        asm volatile("cp.async.wait_group 0;");
 
         // load next tile into registers
         buf = next;
@@ -227,6 +268,9 @@ static __device__ __forceinline__ void wmma_db_int8(
     ptx_mma_m16n8k32_s8(a, b1, D1);
 
     // --- store D0 (left n8) and D1 (right n8) to global int32 scratch ---
+    // hand-coded according to how it is specified in PTX ISA: 
+    // hardware delivers each D reg to a specific (lane, reg)->(row, col) position:
+    // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#warp-level-matrix-fragment-mma-16816-s8
     // PTX m16n8 output layout: each thread owns 2 rows x 1 col (4 elements total)
     // row0 = (lane/4)*2, row1 = (lane/4)*2+1, col = lane%4
     {
@@ -304,28 +348,28 @@ static __device__ __forceinline__ void wmma_db_fp16(
     wmma::load_matrix_sync(a_frag, &As[buf][warp_id][0][0], WMMA_K + PAD);
     wmma::load_matrix_sync(b_frag, &Bs[buf][warp_id][0][0], WMMA_N + PAD);
 
-    for (int k_off = WMMA_K; k_off < K; k_off += WMMA_K) {
+    for (int k = WMMA_K; k < K; k += WMMA_K) {
         int next = 1 - buf;
 
         for (int i = lane_id * 8; i < WMMA_M * WMMA_K; i += 32 * 8) {
             int row = i / WMMA_K, col = i % WMMA_K;
             char*       dst      = (char*)&As[next][warp_id][row][col];
-            const char* src      = (const char*)&A_batch[(tile_row + row) * K + (k_off + col)];
+            const char* src      = (const char*)&A_batch[(tile_row + row) * K + (k + col)];
             unsigned    smem_ptr = __cvta_generic_to_shared(dst);
             asm volatile("cp.async.ca.shared.global [%0], [%1], 16;" :: "r"(smem_ptr), "l"(src));
         }
         for (int i = lane_id * 8; i < WMMA_K * WMMA_N; i += THREADS_PER_WARP * 8) {
             int row = i / WMMA_N, col = i % WMMA_N;
             char*       dst      = (char*)&Bs[next][warp_id][row][col];
-            const char* src      = (const char*)&B_batch[(k_off + row) * N + (tile_col + col)];
+            const char* src      = (const char*)&B_batch[(k + row) * N + (tile_col + col)];
             unsigned    smem_ptr = __cvta_generic_to_shared(dst);
             asm volatile("cp.async.ca.shared.global [%0], [%1], 16;" :: "r"(smem_ptr), "l"(src));
         }
         asm volatile("cp.async.commit_group;");
-        asm volatile("cp.async.wait_group 0;");
         __syncthreads();
 
         wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+        asm volatile("cp.async.wait_group 0;");
 
         buf = next;
         wmma::load_matrix_sync(a_frag, &As[buf][warp_id][0][0], WMMA_K + PAD);
@@ -356,7 +400,7 @@ static __device__ __forceinline__ void quantize_and_assign_per_expert_inputs(
     const half* input_b              = input + batch * N * d_model;
     const int*  expert_counts_b      = expert_counts + batch * num_experts;
     const int*  expert_token_ids_b   = expert_token_ids + batch * num_experts * CAP;
-    int8_t*     per_expert_b         = per_expert_wmma_inputs + batch * num_experts * CAP * d_model;
+    int8_t*     per_expert_wmma_inputs_b         = per_expert_wmma_inputs + batch * num_experts * CAP * d_model;
 
     const int tid     = threadIdx.x;
     const int warp_id = tid / THREADS_PER_WARP;
@@ -374,16 +418,16 @@ static __device__ __forceinline__ void quantize_and_assign_per_expert_inputs(
             const int in_base = token_id * d_model;
             for (int col = lane_id; col < d_model; col += THREADS_PER_WARP) {
                 float val = __half2float(input_b[in_base + col]);
-                per_expert_b[row_base + col] = (int8_t)__float2int_rn(
+                per_expert_wmma_inputs_b[row_base + col] = (int8_t)__float2int_rn(
                     fminf(fmaxf(val / scale_input_act, -128.f), 127.f));
             }
         } else {
             for (int col = lane_id; col < d_model; col += THREADS_PER_WARP)
-                per_expert_b[row_base + col] = (int8_t)0;
+                per_expert_wmma_inputs_b[row_base + col] = (int8_t)0;
         }
     } else {
         for (int col = lane_id; col < d_model; col += THREADS_PER_WARP)
-            per_expert_b[row_base + col] = (int8_t)0;
+            per_expert_wmma_inputs_b[row_base + col] = (int8_t)0;
     }
 }
 

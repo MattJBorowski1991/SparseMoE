@@ -6,15 +6,21 @@ Implementation of a sparse Mixture-of-Experts CUDA workflow. The repository cont
 
 **Tensor Cores** = **TC**; **CAP** = capacity factor for per-expert buffers; 
 
-| TC | Tile | Int8 | CAP | Kernel | ms | Profile | Setup | Notes |
+| TC | Tile | Quant | CAP | Kernel | ms | Profile | Setup | Notes |
 |----|----|----|-------|--------|-----------|---------|-------|-------|
-| Yes | 16×16×16 | No | No | [unfused](kernels/unfused.cu) | 2034 | [Run 1](prof/md/run1/ncu_details.md) | per-stage separate global kernels | overalloc of per-expert buffers |
-| Yes | 16×16×16 | No | No | [baseline](kernels/baseline.cu) | 54 | [Run 1](prof/md/run1/ncu_details.md) | full kernel fusion with per-token routing  | as above  |
-| Yes | 16×16×16 | No | Yes  | [capacity](kernels/capacity.cu) | 32 | [Run 1](prof/md/run1/ncu_details.md), [Run 2](prof/md/run2/ncu_details.md) | capacity-aware routing |  |
-| Yes | 16×16×16 | No | Yes  | [capacity_ldmatrix](kernels/capacity_ldmatrix.cu) | 34.5 | [Run 2](prof/md/run2/ncu_details.md) | PTX: ldmatrix, mma.sync |  |
-| Yes | 16×16×16 | No | Yes | [swizzle_xor](kernels/swizzle_xor.cu) | 70 | [Run 3](prof/md/run2/ncu_details.md), [Run 3](prof/md/run2/ncu_details.md),  [Run 4](prof/md/run2/ncu_details.md), [Run 3](prof/md/run2/ncu_details.md)|  |  |
-| Yes | 16×16×16 | No | Yes | [swizzle_ldmatrix](kernels/swizzle_ldmatrix.cu) | 45.5 | [Run 3](prof/md/run2/ncu_details.md), [Run 4](prof/md/run3/ncu_details.md) | | PTX |
-| Yes | 16×16×16 | No | Yes | [swizzle_autotune](kernels/swizzle_autotune.cu) | 45.5 | [Run 2](prof/md/run2/ncu_details.md), [Run 5](prof/md/run3/ncu_details.md) | | PTX |
+| Yes | 16×16×16 | fp16 | No | [unfused](kernels/unfused.cu) | 2034 | [Run 1](prof/md/run1/ncu_details.md) | per-stage separate global kernels | overalloc of per-expert buffers |
+| Yes | 16×16×16 | fp16 | No | [baseline](kernels/baseline.cu) | 54 | [Run 1](prof/md/run1/ncu_details.md) | full kernel fusion with per-token routing  | as above  |
+| Yes | 16×16×16 | fp16 | Yes  | [capacity](kernels/capacity.cu) | 37.2 | [Run 1](prof/md/run1/ncu_details.md), [Run 2](prof/md/run2/ncu_details.md), [Run 3](prof/md/run3/ncu_details.md), [Run 4](prof/md/run4/ncu_details.md)  | capacity-aware routing |  |
+| Yes | 16×16×16 | fp16 | Yes  | [capacity_ldmatrix](kernels/capacity_ldmatrix.cu) | 34.5 | [Run 2](prof/md/run2/ncu_details.md) | PTX: ldmatrix, mma.sync |  |
+| Yes | 16×16×16 | fp16 | Yes | [swizzle_xor](kernels/swizzle_xor.cu) | 70 | [Run 3](prof/md/run3/ncu_details.md), [Run 4](prof/md/run4/ncu_details.md)| Swizzle: attempt 1 |  |
+| Yes | 16×16×16 | fp16 | Yes | [swizzle_ldmatrix](kernels/swizzle_ldmatrix.cu) | 45.5 | [Run 3](prof/md/run3/ncu_details.md), [Run 4](prof/md/run4/ncu_details.md), [Run 5](prof/md/run5/ncu_details.md) | Swizzle: attempt 2 | PTX |
+| Yes | 16×16×16 | fp16 | Yes | [swizzle_autotune](kernels/swizzle_autotune.cu) | 45.5 | [Run 6](prof/md/run6/ncu_details.md), [Run 5](prof/md/run6/ncu_details.md) | Swizzle: robust | No perf improvement |
+| Yes | 16×16×16 | int8 | Yes | [capacity_int8](kernels/capacity_int8.cu) | 38.9 | [Run 7](prof/md/run7/ncu_details.md) | | |
+| Yes | 16×16×16 | int8 | Yes | [capacity_int8_ptx](kernels/capacity_int8_ptx.cu) | 30.6 | [Run 7](prof/md/run7/ncu_details.md) | | manual pack |
+| Yes | 16×16×16 | fp8 | Yes | [capacity_fp8_ptx](kernels/capacity_fp8_ptx.cu) | 38.7 | [Run 7](prof/md/run7/ncu_details.md) | | manual pack |
+| Yes | 16×16×16 | int4 | Yes | [capacity_int4_ptx](kernels/capacity_int4_ptx.cu) | 14 | [Run 7](prof/md/run7/ncu_details.md) | | manual pack |
+
+
 
 
 ## TL;DR

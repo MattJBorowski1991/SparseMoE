@@ -116,12 +116,12 @@ extern "C" __global__ void wmma_db_kernel(const half* A, const half* B, float* C
         }
 
         asm volatile("cp.async.commit_group;");
-        asm volatile("cp.async.wait_group 0;");
 
         __syncthreads();
         
 
         wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+        asm volatile("cp.async.wait_group 0;");
 
         buf = next;
         wmma::load_matrix_sync(a_frag, &As[buf][warp_id][0][0], WMMA_K + PAD);
