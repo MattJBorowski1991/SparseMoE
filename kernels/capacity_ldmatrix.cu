@@ -50,14 +50,13 @@ static __device__ __forceinline__ void ldmatrix_a_m16n8k16(
 static __device__ __forceinline__ void ldmatrix_b_m16n8k16(
     const half* tile,
     int lane_id,
-    int ld,
     int col_block,
     unsigned (&b)[2]
 )
 {
     int group = (lane_id >> 3) & 1;
     int row = (lane_id & 7) + (group << 3);
-    unsigned src = smem_addr(tile + row * ld + col_block);
+    unsigned src = smem_addr(tile + row * (WMMA_N + PAD) + col_block);
     asm volatile(
         "ldmatrix.sync.aligned.x2.trans.m8n8.shared.b16 {%0, %1}, [%2];\n"
         : "=r"(b[0]), "=r"(b[1])
@@ -153,8 +152,8 @@ static __device__ __forceinline__ void wmma_db(
     __syncthreads(); 
 
     ldmatrix_a_m16n8k16(&As[compute_buf][warp_id][0][0], lane_id, WMMA_K + PAD, a_regs);
-    ldmatrix_b_m16n8k16(&Bs[compute_buf][warp_id][0][0], lane_id, WMMA_N + PAD, 0, b_regs_left);
-    ldmatrix_b_m16n8k16(&Bs[compute_buf][warp_id][0][0], lane_id, WMMA_N + PAD, 8, b_regs_right);
+    ldmatrix_b_m16n8k16(&Bs[compute_buf][warp_id][0][0], lane_id, 0, b_regs_left);
+    ldmatrix_b_m16n8k16(&Bs[compute_buf][warp_id][0][0], lane_id, 8, b_regs_right);
 
     // Main loop: overlap load (to/from buffers) with compute (in fragments)
     for (int k = WMMA_K; k < K; k += WMMA_K){
@@ -198,8 +197,8 @@ static __device__ __forceinline__ void wmma_db(
         stage_buf = tmp;
 
         ldmatrix_a_m16n8k16(&As[compute_buf][warp_id][0][0], lane_id, WMMA_K + PAD, a_regs);
-        ldmatrix_b_m16n8k16(&Bs[compute_buf][warp_id][0][0], lane_id, WMMA_N + PAD, 0, b_regs_left);
-        ldmatrix_b_m16n8k16(&Bs[compute_buf][warp_id][0][0], lane_id, WMMA_N + PAD, 8, b_regs_right);
+        ldmatrix_b_m16n8k16(&Bs[compute_buf][warp_id][0][0], lane_id, 0, b_regs_left);
+        ldmatrix_b_m16n8k16(&Bs[compute_buf][warp_id][0][0], lane_id, 8, b_regs_right);
     }
 
     //compute last tile 

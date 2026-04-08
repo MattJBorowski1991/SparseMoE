@@ -15,15 +15,12 @@ All kernels are based on the double buffered wmma kernel with standard tile size
 | fp16 | Yes  | [capacity](kernels/capacity.cu) | 37.2 | [Run 1](prof/md/run1/ncu_details.md)  | capacity-aware routing |  |
 | fp16 | Yes  | [capacity_ldmatrix](kernels/capacity_ldmatrix.cu) | 34.5 | [Run 2](prof/md/run2/ncu_details.md) | inject PTX  | ldmatrix, mma.sync |
 | fp16 | Yes | [swizzle_xor](kernels/swizzle_xor.cu) | 70 | [Run 3](prof/md/run3/ncu_details.md), [Run 4](prof/md/run4/ncu_details.md)| Swizzle + Unswizzle |  |
-| fp16 | Yes | [swizzle_ldmatrix](kernels/swizzle_ldmatrix.cu) | 45.5 | [Run 3](prof/md/run3/ncu_details.md), [Run 5](prof/md/run5/ncu_details.md) | Swizzle, no unswizzle, inject PTX | ldmatrix, mma.sync |
+| fp16 | Yes | [swizzle_ldmatrix](kernels/swizzle_ldmatrix.cu) | 45.5 | [Run 3](prof/md/run3/ncu_details.md), [Run 5](prof/md/run5/ncu_details.md) | Swizzle, no Unswizzle, inject PTX | ldmatrix, mma.sync |
 | fp16 | Yes | [swizzle_autotune](kernels/swizzle_autotune.cu) | 45.5 | [Run 6](prof/md/run6/ncu_details.md) | Swizzle: robust analysis | No perf improv possible |
-| int8 | Yes | [capacity_int8](kernels/capacity_int8.cu) | 38.9 | [Run 7](prof/md/run7/ncu_details.md) | | |
+| int8 | Yes | [capacity_int8](kernels/capacity_int8.cu) | 38.9 | - | int8 with WMMA | |
 | int8 | Yes | [capacity_int8_ptx](kernels/capacity_int8_ptx.cu) | 30.6 | [Run 7](prof/md/run7/ncu_details.md) | inject PTX | manual pack |
 | fp8 | Yes | [capacity_fp8_ptx](kernels/capacity_fp8_ptx.cu) | 38.7 | [Run 7](prof/md/run7/ncu_details.md) | inject PTX | manual pack |
 | int4 | Yes | [capacity_int4_ptx](kernels/capacity_int4_ptx.cu) | 14 | [Run 7](prof/md/run7/ncu_details.md) | inject PTX | manual pack |
-
-
-
 
 ## TL;DR
 

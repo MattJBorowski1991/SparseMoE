@@ -1,3 +1,6 @@
+
+Kernels profiled: [swizzle_ldmatrix.cu](kernels/swizzle_ldmatrix.cu) and [capacity.cu](kernels/capacity.cu).
+
 Profiling analysis of swizzle_ldmatrix. Motivation for performing swizzling via ldmatrix and mma.sync primitives: 
 
 swizzle_xor swizzles the stored layout but still pays extra reorder/unswizzle cost, while swizzle_ldmatrix tries to make the swizzled layout match the tensor-core consumer path directly.

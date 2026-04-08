@@ -1,1 +1,1 @@
-Comparison of capacity () and capacity_ldmatrix, where we replace wmma::load_matrix_sync & wmma::mma_sync with lower level ldmatrix & mma.sync .
+Kernels profiled: [capacity.cu](kernels/capacity.cu) and [capacity_ldmatrix.cu](kernels/capacity_ldmatrix.cu)

@@ -1,5 +1,7 @@
 # Run 6 — Robust Swizzling Framework
 
+Kernels profiled: [swizzle_autotune.cu](kernels/swizzle_autotune.cu).
+
 The goal of this run is to develop a structured swizzling framework rather than rely on ad hoc experimentation.
 
 We begin by analyzing exactly how bank conflicts arise in [capacity.cu](kernels/capacity.cu), instead of iterating experimentally as in [Run 2](prof/md/run2/ncu_details.md) and [Run 3](prof/md/run3/ncu_details.md).
