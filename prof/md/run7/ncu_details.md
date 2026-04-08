@@ -72,14 +72,14 @@ For the most quantized version (int4) you can see overall lower figures for the 
 
 ### Scheduler Statistics
 
-Interestingly Eligible & Issued Warps achieve sginificantly better results for int4 and fp8. Even more instersting - this has almost no impact on Achieved Occupancy (~49% for all) and this is why we leave the "Occupancy" section out of this analysis.
+Interestingly, Eligible & Issued Warps achieve significantly better results for int4 and fp8. Even more interesting — this has almost no impact on Achieved Occupancy (~49% for all); this is why we leave the "Occupancy" section out of this analysis.
 
 ![Quantizations - Scheduler Statistics](../../images/run7/sparse_moe_quantizations_scheduler_stats.jpg)
 
 ### Warp State Statistics
 
-Warps wait least in between instructions for int4 and fp8 (both ~10 cycles) vs fp16 (22.7) and int8 (25.6).
-This likely accounts for the fact for the fact of only 20% perfomance improvement of int8 vs fp16 - specifically Stall MIO Throttle (large jump) and Stall Long Scoreboard (close to fp16 value).
+Warps wait the least between instructions for int4 and fp8 (both ~10 cycles) vs fp16 (22.7) and int8 (25.6).
+This likely explains the relatively small (~20%) performance improvement of int8 vs fp16, driven by increased Stall MIO Throttle and Stall Long Scoreboard.
 
 ![Quantizations - Warp State Statistics 1](../../images/run7/sparse_moe_quantizations_warp_state_stats_1.jpg)
 
@@ -92,7 +92,7 @@ Instructions statistics provide a glimpse on why there was a deterioration in pe
 fp8 dominates most instruction types with large jumps in instruction count for: 
 - IMAD - Integer Multiply and Add
 - BRA - Relative Branch
-- BSSY - Synchronize Threads on a Converfence Barrier
+- BSSY - Synchronize Threads on a Convergence Barrier
 - ISETP - Integer Compare and Set Predicate
 
 Including extreme outliers: 
@@ -111,14 +111,15 @@ And presence in almost all other Instruction Types!
 
 ![Quantizations - GPU and Memory Workload](../../images/run7/sparse_moe_quantizations_gpu_and_mem_workload_distribution.jpg)
 
-where the "Average" is calculated over respective partitions of SM/SMSP/DRAM/L1/L2. The table below provides the number of partitions for the L4 we are using for the profiling.
+Here, "Average" is computed per partition (DRAM controller, L1 slice, L2 slice, SM, or SMSP). The table below lists the number of partitions on the profiled L4 device.
 
-Unit	Count	Basis
-DRAM controllers	6	192-bit bus ÷ 32-bit/controller; Total DRAM Elapsed ÷ (SM elapsed × DRAM/SM clock ratio ~7.85) ≈ 6
-SMs	58	Explicit in Launch Statistics
-L1 Slices 58	Explicit in Launch Statistics
-L2 slices	24	24 MB total, 1 MB/slice; Total L2 Elapsed ÷ SM elapsed ≈ 24.9
-SMSPs	232	58 × 4 SMSPs/SM; Total SMSP Elapsed ÷ SM elapsed ≈ 232
+| Unit | Count | Basis |
+|---|---:|---|
+| DRAM controllers | 6 | 192-bit bus ÷ 32-bit/controller; derived from total DRAM elapsed and clock ratios |
+| SMs | 58 | Explicit in Launch Statistics |
+| L1 slices | 58 | One L1/TEX slice per SM (see Launch Statistics) |
+| L2 slices | 24 | 24 MB total; ~1 MB per slice; derived from total L2 elapsed |
+| SMSPs | 232 | 58 × 4 SMSPs per SM |
 
 Rule of thumb: average active = efficiency lens; total elapsed = time lens.
 
