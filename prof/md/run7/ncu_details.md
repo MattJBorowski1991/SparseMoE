@@ -1,17 +1,30 @@
-**Run7 - Quantizations - Overview**
+# Sparse MoE Quantization Study — Nsight Compute Analysis (Ada Lovelace)
 
-Kernels profiled: [capacity.cu](kernels/capacity.cu), [capacity_int8_ptx.cu](kernels/capacity_int8_ptx.cu), [capacity_fp8_ptx.cu](kernels/capacity_fp8_ptx.cu), [capacity_int4_ptx.cu](kernels/capacity_int4_ptx.cu).
+## Summary
 
+Four hand-written CUDA kernels for a capacity-gated Sparse Mixture-of-Experts (MoE) matrix multiplication are implemented and profiled on an **NVIDIA L4 GPU (Ada Lovelace, SM 89)**. Each kernel targets a different numeric precision — FP16, FP8, INT8, and INT4 — using explicit **PTX `mma.sync`** intrinsics where the WMMA C++ API lacks support or where direct register control is required. Profiles were captured with **NVIDIA Nsight Compute** and analysed across: throughput, roofline, compute workload, memory workload, scheduler statistics, warp state statistics, and instruction statistics.
 
-This document summarizes an NCU-based comparison between the following kernels:
+| Variant | Latency | vs FP16 | Primary Bottleneck |
+|---|---:|---:|---|
+| FP16 (WMMA baseline) | 37 ms | — | Memory-bound; highest DRAM throughput |
+| FP8 (PTX)            | 39 ms | **−5% (slower)** | Instruction explosion — 4.1 B vs 1.8 B instructions for FP16 |
+| INT8 (PTX)           | 30 ms | +19% | MIO Throttle and Long Scoreboard stalls |
+| INT4 (PTX)           | 14 ms | **+2.6×** | Nearest to compute-bound; lowest DRAM active cycles |
 
-- `capacity` — reference WMMA-backed kernel (FP16 baseline). Use as the baseline for compute-bound behavior and occupancy.
-- `capacity_int8` — INT8 variant using higher-op throughput on Tensor Cores; expect improved throughput if memory layout and packing are optimal.
-- `capacity_int8_ptx` — INT8 variant implemented with explicit PTX `mma.sync` (hand-packed registers); micro-optimizations may improve tensor-core utilization and reduce overhead compared to higher-level APIs.
-- `capacity_fp8_ptx` — FP8 variant implemented via PTX `mma.sync` (needed because WMMA API lacks FP8 types); watch for quantization-induced accuracy vs performance trade-offs and for how many tensor lanes are active per instruction on Ada.
-- `capacity_int4_ptx` — INT4 variant (packed nibbles) implemented with PTX; correctness of packing and B-layout is critical for correct mma operands and for maximizing throughput.
+The most counter-intuitive result is that **FP8 is slower than FP16**: despite Ada Lovelace having native FP8 Tensor Core support, the surrounding FP→INT conversion and predicate overhead generates 2.3× more executed instructions than the FP16 path. **INT4 achieves a 2.6× end-to-end speedup** and approaches compute-bound behaviour on the roofline.
 
-**Ada Lovelace Precision Support**
+---
+
+## Kernels Profiled
+
+| Kernel | Precision | API |
+|---|---|---|
+| [capacity.cu](kernels/capacity.cu) | FP16 | WMMA — reference baseline |
+| [capacity_fp8_ptx.cu](kernels/capacity_fp8_ptx.cu) | FP8 | PTX `mma.sync` (WMMA lacks native FP8 types on Ada) |
+| [capacity_int8_ptx.cu](kernels/capacity_int8_ptx.cu) | INT8 | PTX `mma.sync` with manual 4 × int8 → int32 packing |
+| [capacity_int4_ptx.cu](kernels/capacity_int4_ptx.cu) | INT4 | PTX `mma.sync` with nibble-packed B-matrix operands |
+
+## Ada Lovelace Precision Support
 
 Target hardware: Ada Lovelace (SM 89, L4/RTX 40-class). Known precision support relevant to these kernels:
 
@@ -22,32 +35,36 @@ Target hardware: Ada Lovelace (SM 89, L4/RTX 40-class). Known precision support 
 
 Notes: where the WMMA API lacks a convenience type (FP8), kernel implementations typically use PTX `mma.sync` intrinsics or hand-packed register formats.
 
-**mma.sync with int8**
+## mma.sync Walkthrough: INT8 Register Packing
 
+The animation below demonstrates how manual packing (4 × int8 into 1 int32) prepares operands for subsequent `mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32` execution:
 
-For the purpose of better understanding how mma.sync with quantization works below is an animation of how manual packing (4-packs of int8 into 1 int32)  for subsequent `mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32` execution works:
-
-![mma.sync in int8 - load & execute - video](../../images/run7/m16n8k32_int8_ptx_load.mp4)
+<video controls loop muted playsinline>
+	<source src="../../images/run7/m16n8k32_int8_ptx_load.mp4" type="video/mp4">
+	Your browser does not support the video tag.
+</video>
 
 
 ## Detailed Analysis
 
-The colors below correspond to the following:
+The colors below are used consistently across all Nsight Compute screenshots in this section:
 
-| Color  | Variant | Kernel file | Time |
+| Color  | Variant | Kernel file | Latency |
 |---|---|---|---:|
 | Green  | FP16  | [capacity.cu](kernels/capacity.cu) | 37 ms |
 | Orange | FP8 (PTX) | [capacity_fp8_ptx.cu](kernels/capacity_fp8_ptx.cu) | 39 ms |
-| Purple | INT8 (PTX) | [capacity_int8_ptx.cu](kernels/capacity_int8_ptx.cu) | 30.5 ms |
+| Purple | INT8 (PTX) | [capacity_int8_ptx.cu](kernels/capacity_int8_ptx.cu) | 30 ms |
 | Blue   | INT4 (PTX) | [capacity_int4_ptx.cu](kernels/capacity_int4_ptx.cu) | 14 ms |
+
+The "current" kernel highlighted in the Nsight Compute UI throughout these screenshots is [capacity_int4_ptx.cu](kernels/capacity_int4_ptx.cu).
 
 ### Throughput
 
-Note the significantly higher Memory Throughput and lower Compute Throughput of the least-quantized version which is the fp16 [capacity.cu](kernels/capacity.cu). 
+The FP16 baseline exhibits markedly higher Memory Throughput and lower Compute Throughput than the quantized variants, consistent with its larger per-element data footprint.
 
 ![Quantizations - Throughput](../../images/run7/sparse_moe_quantizations_throughput.jpg)
 
-All four kernels are memory bound, however the below roofline illustrates well how quantization allows to gradually move out of the "memory-bound" territory to the "compute-bound" territory. int4 is closest to compute-bound while fp16 is furthest from it. 
+All four kernels are memory-bound; however, the roofline below illustrates how quantization progressively shifts the operating point towards compute-bound territory — INT4 is the closest to that boundary while FP16 is the furthest.
 
 ![Quantizations - Roofline](../../images/run7/sparse_moe_quantizations_roofline.jpg)
 
@@ -55,16 +72,16 @@ All four kernels are memory bound, however the below roofline illustrates well h
 
 ### Compute Workload
 
-Interestingly, the Executed Instructions Per Clock Active is high for both int4 and fp8 (~2.3) and lower for int8 and fp16 (~1.0).
-For the most quantized version (int4 in blue) - the Arithmetic Logical Unit dominates the % of elapsed cycles - almost 50%. 
-Note also the large jump in the `XU` (responsible for functions such as sin, cos, square root and int-to-float/float-to-int conversions) pipe for fp8 (orange) - 23% of peak vs others ~0-1%. As you can see for the other pipe types - fp8 keeps them relatively busy compared to the other quantizations.
+INT4 and FP8 exhibit markedly higher Executed Instructions Per Clock Active (~2.3) compared to INT8 and FP16 (~1.0).
+For INT4 (blue), the Arithmetic Logical Unit (ALU) dominates — accounting for almost 50% of elapsed cycles, reflecting the dense integer compute workload.
+The `XU` pipe (responsible for sin, cos, square root and int-to-float/float-to-int conversions) shows a large spike for FP8 (orange) — 23% of peak versus ~0–1% for all other variants. Across the remaining pipe types, FP8 maintains the highest overall utilisation, a consequence of conversion overhead rather than mma compute throughput.
 
 ![Quantizations - Compute Workload](../../images/run7/sparse_moe_quantizations_compute_workload.jpg)
 
 ### Memory Workload
 
-Memory throughput in Gbyte/s is highest in the least quantized (fp16) version. 
-For the most quantized version (int4) you can see overall lower figures for the Memory Throughput expressed as % of peak metrics, other than Mem Pipes Busy (the memory instruction throughput of SMs) where it is on the higher side.  
+Memory throughput in Gbyte/s is highest for the FP16 baseline, as expected given its larger per-element data movement.
+INT4 shows overall lower Memory Throughput figures as a percentage of peak, with one exception: Mem Pipes Busy (memory instruction throughput of the SMs) is comparatively elevated, reflecting the higher instruction dispatch rate of a more compute-intensive kernel.
 
 ![Quantizations - Memory workload Chart](../../images/run7/quantizations_memory_chart.png)
 
@@ -72,35 +89,35 @@ For the most quantized version (int4) you can see overall lower figures for the 
 
 ### Scheduler Statistics
 
-Interestingly, Eligible & Issued Warps achieve significantly better results for int4 and fp8. Even more interesting — this has almost no impact on Achieved Occupancy (~49% for all); this is why we leave the "Occupancy" section out of this analysis.
+Eligible and Issued Warps are significantly higher for INT4 and FP8 than for INT8 and FP16. Notably, this improved scheduling efficiency has almost no impact on Achieved Occupancy (~49% for all variants), which is why occupancy is not analysed separately here.
 
 ![Quantizations - Scheduler Statistics](../../images/run7/sparse_moe_quantizations_scheduler_stats.jpg)
 
 ### Warp State Statistics
 
-Warps wait the least between instructions for int4 and fp8 (both ~10 cycles) vs fp16 (22.7) and int8 (25.6).
-This likely explains the relatively small (~20%) performance improvement of int8 vs fp16, driven by increased Stall MIO Throttle and Stall Long Scoreboard.
+INT4 and FP8 have the shortest average inter-instruction stall time (~10 cycles each) versus FP16 (22.7 cycles) and INT8 (25.6 cycles).
+This likely explains INT8's modest ~20% gain over FP16: warp execution is throttled by Stall MIO Throttle and Stall Long Scoreboard, indicating that memory sub-system latency is the limiting factor rather than instruction throughput.
 
 ![Quantizations - Warp State Statistics 1](../../images/run7/sparse_moe_quantizations_warp_state_stats_1.jpg)
 
 ![Quantizations - Warp State Statistics 2](../../images/run7/sparse_moe_quantizations_warp_state_stats_2.jpg)
 
-### Instruction Statistics 
+### Instruction Statistics
 
-Instructions statistics provide a glimpse on why there was a deterioration in performance for the fp8 kernel (in orange) - fp8 had 4.13bn executed instructions vs 1.78bn of fp16, 1.27bn of int8 and 1.44bn of int4.
+Instruction statistics explain the FP8 performance regression: FP8 executed 4.13 billion instructions versus 1.78 billion for FP16, 1.27 billion for INT8, and 1.44 billion for INT4 — a 2.3× overhead relative to the FP16 baseline.
 
-fp8 dominates most instruction types with large jumps in instruction count for: 
-- IMAD - Integer Multiply and Add
-- BRA - Relative Branch
-- BSSY - Synchronize Threads on a Convergence Barrier
-- ISETP - Integer Compare and Set Predicate
+FP8 dominates most instruction types, with large jumps in instruction count for:
+- IMAD — Integer Multiply and Add
+- BRA — Relative Branch
+- BSSY — Synchronize Threads on a Convergence Barrier
+- ISETP — Integer Compare and Set Predicate
 
-Including extreme outliers: 
-- F2I - Float to Int Conversion
-- HADD2 - FP16 Add
-- FSETP - FP32 Compare and Set Predicate
+Including extreme outliers:
+- F2I — Float to Int Conversion
+- HADD2 — FP16 Add
+- FSETP — FP32 Compare and Set Predicate
 
-And presence in almost all other Instruction Types!
+...as well as non-trivial presence across nearly every other instruction type. This instruction explosion is the primary cause of FP8's net latency regression relative to FP16.
 
 ![Quantizations - Instruction Statistics 1](../../images/run7/sparse_moe_quantizations_instruction_stats_1.jpg)
 ![Quantizations - Instruction Statistics 2](../../images/run7/sparse_moe_quantizations_instruction_stats_2.jpg)
@@ -108,32 +125,52 @@ And presence in almost all other Instruction Types!
 
 ### GPU and Memory Workload Distribution
 
+The "Average" in "Average Active Cycles" is computed per hardware partition (DRAM controller, L1 slice, L2 slice, SM, or SMSP). Rule of thumb: **Average Active = efficiency lens; Total Elapsed = time lens.**
 
-![Quantizations - GPU and Memory Workload](../../images/run7/sparse_moe_quantizations_gpu_and_mem_workload_distribution.jpg)
-
-Here, "Average" is computed per partition (DRAM controller, L1 slice, L2 slice, SM, or SMSP). The table below lists the number of partitions on the profiled L4 device.
+The table below lists the number of partitions on the profiled L4 device.
 
 | Unit | Count | Basis |
 |---|---:|---|
-| DRAM controllers | 6 | 192-bit bus ÷ 32-bit/controller; derived from total DRAM elapsed and clock ratios |
+| DRAM controllers | 6 | 192-bit bus ÷ 32-bit/controller |
 | SMs | 58 | Explicit in Launch Statistics |
-| L1 slices | 58 | One L1/TEX slice per SM (see Launch Statistics) |
-| L2 slices | 24 | 24 MB total; ~1 MB per slice; derived from total L2 elapsed |
+| L1 slices | 58 | One L1/TEX slice per SM |
+| L2 slices | 24 | 24 MB total; ~1 MB per slice |
 | SMSPs | 232 | 58 × 4 SMSPs per SM |
 
-Rule of thumb: average active = efficiency lens; total elapsed = time lens.
+INT4 shows a large reduction in Average Active Cycles across all partition types, most notably at the DRAM controllers — confirming that quantization primarily reduces memory traffic rather than compute work per SM.
 
 ![Workload Distribution — Average Active Cycles](../../images/run7/workload_dist_avg_active.png)
 
+INT4 also shows a significant decrease in Total Elapsed Cycles. SMSP values are exactly 4× their SM counterparts (4 SMSPs per SM) and are included here for completeness.
+
 ![Workload Distribution — Total Elapsed Cycles](../../images/run7/workload_dist_total_elapsed.png)
 
-Comparing Utilization = Average Active / (Total Elapsed / N_partitions) across quantizations reveals whether a faster kernel (INT4) is faster because it does less work per partition or because it keeps partitions busier. 
+Utilization = Average Active / (Total Elapsed / N_partitions) answers whether a faster kernel does less work per partition or keeps partitions busier. For INT4, utilization drops most sharply at the DRAM controller — confirming that INT4 is faster primarily because it moves less data, not because it is less active at the compute level. Utilization across SM, L1, L2, and SMSP partitions is broadly consistent across all four variants.
 
 ![Workload Distribution — Utilisation](../../images/run7/workload_dist_utilization.png)
 
+![Quantizations - GPU and Memory Workload](../../images/run7/sparse_moe_quantizations_gpu_and_mem_workload_distribution.jpg)
 
-### Instruction Statistics
+---
 
-![Quantizations - Instruction Statistics 1](../../images/run7/sparse_moe_quantizations_instruction_stats_1.jpg)
+## Conclusions
 
-![Quantizations - Instruction Statistics 2](../../images/run7/sparse_moe_quantizations_instruction_stats_2.jpg)
+### Performance Summary
+
+Quantization type fundamentally reshapes both throughput and bottleneck category for this Sparse MoE kernel on Ada Lovelace:
+
+- **INT4 (+2.6×)** — The standout result. Reducing operand bit-width to 4 bits approximately quarters the memory traffic relative to FP16, shifting the roofline operating point towards compute-bound territory. The key engineering challenge is correct nibble packing for B-matrix operands in `mma.sync.aligned.m16n8k32.row.col.s32.s4.s4.s32`.
+
+- **INT8 (+19%)** — A genuine but modest gain. Warp State analysis identifies the bottleneck: Stall MIO Throttle and Stall Long Scoreboard account for the bulk of inter-instruction stall cycles, indicating that memory sub-system latency — not instruction throughput — is the limiting factor. Asynchronous prefetching (`cp.async`) or double-buffering would be the most direct next optimisation step.
+
+- **FP8 (−5%, slower than FP16)** — The most instructive result. Despite Ada Lovelace having native FP8 Tensor Core support, this implementation incurs 4.13 billion executed instructions versus 1.78 billion for FP16 (2.3×). The `XU` pipe reaches 23% of peak utilisation (versus < 1% for all other variants), and F2I, HADD2, FSETP, ISETP, IMAD, and BRA counts all spike relative to the FP16 path. Reducing or fusing the FP→INT conversion logic surrounding each `mma.sync` is the primary lever for recovering FP8 performance.
+
+### Skills Demonstrated
+
+- **PTX programming** — hand-written `mma.sync` kernels for FP8, INT8, and INT4 precision on Ada Lovelace (SM 89), bypassing the WMMA C++ API where required.
+- **Register-level operand packing** — 4 × int8 → int32 packing for INT8; nibble layout for INT4 B-matrix operands.
+- **Roofline analysis** — quantitative positioning of all four kernels on the memory-bound/compute-bound spectrum.
+- **Nsight Compute profiling** — six analysis domains: throughput, compute workload, memory workload, scheduler statistics, warp state statistics, and instruction statistics.
+- **Partition-level workload distribution** — DRAM controller, L1/L2 slice, SM, and SMSP partition analysis across all quantization variants.
+- **Root-cause analysis** — linking the FP8 instruction explosion to specific ISA instruction classes (F2I, HADD2, FSETP, IMAD) via NCU instruction statistics.
+- **Hardware knowledge** — Ada Lovelace precision support matrix, DRAM controller topology (L4: 6 controllers), SM/SMSP layout (58 SMs × 4 SMSPs), and L2 slice organisation (24 × 1 MB).
