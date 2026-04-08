@@ -4,21 +4,23 @@ Implementation of a sparse Mixture-of-Experts CUDA workflow. The repository cont
 
 ## Performance Highlights
 
+All kernels are based on the double buffered wmma kernel with standard tile sizes `16x16x16`. The hardware I used (L4, Ada Lovelace, sm_89) does not support `fp4` hence it is excluded from the analysis.
+
 **Tensor Cores** = **TC**; **CAP** = capacity factor for per-expert buffers; 
 
-| TC | Tile | Quant | CAP | Kernel | ms | Profile | Setup | Notes |
+| Quant | CAP | Kernel | ms | Profile | Setup | Notes |
 |----|----|----|-------|--------|-----------|---------|-------|-------|
-| Yes | 16×16×16 | fp16 | No | [unfused](kernels/unfused.cu) | 2034 | [Run 1](prof/md/run1/ncu_details.md) | per-stage separate global kernels | overalloc of per-expert buffers |
-| Yes | 16×16×16 | fp16 | No | [baseline](kernels/baseline.cu) | 54 | [Run 1](prof/md/run1/ncu_details.md) | full kernel fusion with per-token routing  | as above  |
-| Yes | 16×16×16 | fp16 | Yes  | [capacity](kernels/capacity.cu) | 37.2 | [Run 1](prof/md/run1/ncu_details.md)  | capacity-aware routing |  |
-| Yes | 16×16×16 | fp16 | Yes  | [capacity_ldmatrix](kernels/capacity_ldmatrix.cu) | 34.5 | [Run 2](prof/md/run2/ncu_details.md) | inject PTX  | ldmatrix, mma.sync |
-| Yes | 16×16×16 | fp16 | Yes | [swizzle_xor](kernels/swizzle_xor.cu) | 70 | [Run 3](prof/md/run3/ncu_details.md), [Run 4](prof/md/run4/ncu_details.md)| Swizzle + Unswizzle |  |
-| Yes | 16×16×16 | fp16 | Yes | [swizzle_ldmatrix](kernels/swizzle_ldmatrix.cu) | 45.5 | [Run 3](prof/md/run3/ncu_details.md), [Run 5](prof/md/run5/ncu_details.md) | Swizzle: attempt 2 | PTX |
-| Yes | 16×16×16 | fp16 | Yes | [swizzle_autotune](kernels/swizzle_autotune.cu) | 45.5 | [Run 6](prof/md/run6/ncu_details.md) | Swizzle: robust | No perf improvement |
-| Yes | 16×16×16 | int8 | Yes | [capacity_int8](kernels/capacity_int8.cu) | 38.9 | [Run 7](prof/md/run7/ncu_details.md) | | |
-| Yes | 16×16×16 | int8 | Yes | [capacity_int8_ptx](kernels/capacity_int8_ptx.cu) | 30.6 | [Run 7](prof/md/run7/ncu_details.md) | inject PTX | manual pack |
-| Yes | 16×16×16 | fp8 | Yes | [capacity_fp8_ptx](kernels/capacity_fp8_ptx.cu) | 38.7 | [Run 7](prof/md/run7/ncu_details.md) | inject PTX | manual pack |
-| Yes | 16×16×16 | int4 | Yes | [capacity_int4_ptx](kernels/capacity_int4_ptx.cu) | 14 | [Run 7](prof/md/run7/ncu_details.md) | inject PTX | manual pack |
+| fp16 | No | [unfused](kernels/unfused.cu) | 2034 | [Run 1](prof/md/run1/ncu_details.md) | per-stage separate global kernels | overalloc of per-expert buffers |
+| fp16 | No | [baseline](kernels/baseline.cu) | 54 | [Run 1](prof/md/run1/ncu_details.md) | full kernel fusion with per-token routing  | as above  |
+| fp16 | Yes  | [capacity](kernels/capacity.cu) | 37.2 | [Run 1](prof/md/run1/ncu_details.md)  | capacity-aware routing |  |
+| fp16 | Yes  | [capacity_ldmatrix](kernels/capacity_ldmatrix.cu) | 34.5 | [Run 2](prof/md/run2/ncu_details.md) | inject PTX  | ldmatrix, mma.sync |
+| fp16 | Yes | [swizzle_xor](kernels/swizzle_xor.cu) | 70 | [Run 3](prof/md/run3/ncu_details.md), [Run 4](prof/md/run4/ncu_details.md)| Swizzle + Unswizzle |  |
+| fp16 | Yes | [swizzle_ldmatrix](kernels/swizzle_ldmatrix.cu) | 45.5 | [Run 3](prof/md/run3/ncu_details.md), [Run 5](prof/md/run5/ncu_details.md) | Swizzle, no unswizzle, inject PTX | ldmatrix, mma.sync |
+| fp16 | Yes | [swizzle_autotune](kernels/swizzle_autotune.cu) | 45.5 | [Run 6](prof/md/run6/ncu_details.md) | Swizzle: robust analysis | No perf improv possible |
+| int8 | Yes | [capacity_int8](kernels/capacity_int8.cu) | 38.9 | [Run 7](prof/md/run7/ncu_details.md) | | |
+| int8 | Yes | [capacity_int8_ptx](kernels/capacity_int8_ptx.cu) | 30.6 | [Run 7](prof/md/run7/ncu_details.md) | inject PTX | manual pack |
+| fp8 | Yes | [capacity_fp8_ptx](kernels/capacity_fp8_ptx.cu) | 38.7 | [Run 7](prof/md/run7/ncu_details.md) | inject PTX | manual pack |
+| int4 | Yes | [capacity_int4_ptx](kernels/capacity_int4_ptx.cu) | 14 | [Run 7](prof/md/run7/ncu_details.md) | inject PTX | manual pack |
 
 
 
