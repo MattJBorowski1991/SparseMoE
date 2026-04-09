@@ -1,8 +1,8 @@
-# Sparse MoE Quantization Study — Nsight Compute Analysis (Ada Lovelace)
+# Sparse MoE Quantization Study — Nsight Compute Analysis
 
 ## Summary
 
-Four hand-written CUDA kernels for a capacity-gated Sparse Mixture-of-Experts (MoE) matrix multiplication are implemented and profiled on an **NVIDIA L4 GPU (Ada Lovelace, SM 89)**. Each kernel targets a different numeric precision — FP16, FP8, INT8, and INT4 — using explicit **PTX `mma.sync`** intrinsics where the WMMA C++ API lacks support or where direct register control is required. Profiles were captured with **NVIDIA Nsight Compute** and analysed across: throughput, roofline, compute workload, memory workload, scheduler statistics, warp state statistics, and instruction statistics.
+Four hand-written CUDA kernels for a capacity-gated Sparse Mixture-of-Experts (MoE) matrix multiplication are implemented and profiled on an **NVIDIA L4 GPU (Ada Lovelace, SM 89)**. Each kernel targets a different numeric precision — FP16, FP8, INT8, and INT4 — using explicit **PTX `mma.sync`** intrinsics where the WMMA C++ API lacks support or where direct register control is required. Profiles were captured with **Nsight Compute** and analysed across: throughput, roofline, compute workload, memory workload, scheduler statistics, warp state statistics, and instruction statistics.
 
 | Variant | Latency | vs FP16 | Primary Bottleneck |
 |---|---:|---:|---|
@@ -19,10 +19,10 @@ The most counter-intuitive result is that **FP8 is slower than FP16**: despite A
 
 | Kernel | Precision | API |
 |---|---|---|
-| [capacity.cu](kernels/capacity.cu) | FP16 | WMMA — reference baseline |
-| [capacity_fp8_ptx.cu](kernels/capacity_fp8_ptx.cu) | FP8 | PTX `mma.sync` (WMMA lacks native FP8 types on Ada) |
-| [capacity_int8_ptx.cu](kernels/capacity_int8_ptx.cu) | INT8 | PTX `mma.sync` with manual 4 × int8 → int32 packing |
-| [capacity_int4_ptx.cu](kernels/capacity_int4_ptx.cu) | INT4 | PTX `mma.sync` with nibble-packed B-matrix operands |
+| [capacity.cu](../../../kernels/capacity.cu) | FP16 | WMMA — reference baseline |
+| [capacity_fp8_ptx.cu](../../../kernels/capacity_fp8_ptx.cu) | FP8 | PTX `mma.sync` (WMMA lacks native FP8 types on Ada) |
+| [capacity_int8_ptx.cu](../../../kernels/capacity_int8_ptx.cu) | INT8 | PTX `mma.sync` with manual 4 × int8 → int32 packing |
+| [capacity_int4_ptx.cu](../../../kernels/capacity_int4_ptx.cu) | INT4 | PTX `mma.sync` with nibble-packed B-matrix operands |
 
 ## Ada Lovelace Precision Support
 
@@ -51,12 +51,12 @@ The colors below are used consistently across all Nsight Compute screenshots in 
 
 | Color  | Variant | Kernel file | Latency |
 |---|---|---|---:|
-| Green  | FP16  | [capacity.cu](kernels/capacity.cu) | 37 ms |
-| Orange | FP8 (PTX) | [capacity_fp8_ptx.cu](kernels/capacity_fp8_ptx.cu) | 39 ms |
-| Purple | INT8 (PTX) | [capacity_int8_ptx.cu](kernels/capacity_int8_ptx.cu) | 30 ms |
-| Blue   | INT4 (PTX) | [capacity_int4_ptx.cu](kernels/capacity_int4_ptx.cu) | 14 ms |
+| Green  | FP16  | [capacity.cu](../../../kernels/capacity.cu) | 37 ms |
+| Orange | FP8 (PTX) | [capacity_fp8_ptx.cu](../../../kernels/capacity_fp8_ptx.cu) | 39 ms |
+| Purple | INT8 (PTX) | [capacity_int8_ptx.cu](../../../kernels/capacity_int8_ptx.cu) | 30 ms |
+| Blue   | INT4 (PTX) | [capacity_int4_ptx.cu](../../../kernels/capacity_int4_ptx.cu) | 14 ms |
 
-The "current" kernel highlighted in the Nsight Compute UI throughout these screenshots is [capacity_int4_ptx.cu](kernels/capacity_int4_ptx.cu).
+The "current" kernel highlighted in the Nsight Compute UI throughout these screenshots is [capacity_int4_ptx.cu](../../../kernels/capacity_int4_ptx.cu).
 
 ### Throughput
 
@@ -74,7 +74,7 @@ All four kernels are memory-bound; however, the roofline below illustrates how q
 
 INT4 and FP8 exhibit markedly higher Executed Instructions Per Clock Active (~2.3) compared to INT8 and FP16 (~1.0).
 For INT4 (blue), the Arithmetic Logical Unit (ALU) dominates — accounting for almost 50% of elapsed cycles, reflecting the dense integer compute workload.
-The `XU` pipe (responsible for sin, cos, square root and int-to-float/float-to-int conversions) shows a large spike for FP8 (orange) — 23% of peak versus ~0–1% for all other variants. Across the remaining pipe types, FP8 maintains the highest overall utilisation, a consequence of conversion overhead rather than mma compute throughput.
+The `XU` pipe (responsible for sin, cos, square root and int-to-float/float-to-int conversions) shows a large spike for FP8 (orange) — 23% of peak versus ~0–1% for all other variants. Across the remaining pipe types, FP8 maintains a high overall utilisation, a consequence of conversion overhead rather than mma compute throughput.
 
 ![Quantizations - Compute Workload](../../images/run7/sparse_moe_quantizations_compute_workload.jpg)
 
@@ -83,13 +83,13 @@ The `XU` pipe (responsible for sin, cos, square root and int-to-float/float-to-i
 Memory throughput in Gbyte/s is highest for the FP16 baseline, as expected given its larger per-element data movement.
 INT4 shows overall lower Memory Throughput figures as a percentage of peak, with one exception: Mem Pipes Busy (memory instruction throughput of the SMs) is comparatively elevated, reflecting the higher instruction dispatch rate of a more compute-intensive kernel.
 
-![Quantizations - Memory workload Chart](../../images/run7/quantizations_memory_chart.png)
+![Quantizations - Memory workload Chart](../../images/run7/memory_workload_chart.png)
 
 ![Quantizations - Memory Workload](../../images/run7/sparse_moe_quantizations_memory_workload.jpg)
 
 ### Scheduler Statistics
 
-Eligible and Issued Warps are significantly higher for INT4 and FP8 than for INT8 and FP16. Notably, this improved scheduling efficiency has almost no impact on Achieved Occupancy (~49% for all variants), which is why occupancy is not analysed separately here.
+Eligible and Issued Warps are significantly higher for INT4 and FP8 than for INT8 and FP16. Achieved Occupancy (~49% for all variants) is unchanged because it measures a different dimension: the static count of warps resident on the SM, which is capped by register and shared-memory limits. Eligible/Issued Warps is a dynamic per-cycle measure — fewer stall cycles mean more of the same resident warps have their operands ready and can be issued each cycle. Occupancy is therefore not a differentiating factor here and is not analysed separately.
 
 ![Quantizations - Scheduler Statistics](../../images/run7/sparse_moe_quantizations_scheduler_stats.jpg)
 
