@@ -1,12 +1,20 @@
 # Sparse Mixture-of-Experts (MoE)
 
-A from-scratch CUDA implementation of a sparse Mixture-of-Experts inference kernel, progressively optimized through capacity-aware routing, PTX-level tensor-core intrinsics, shared-memory swizzling, and quantization (FP8/INT8/INT4). Each optimization step is profiled with Nsight Compute and documented with derived root-cause analysis — PTX intrinsics (`ldmatrix`, `mma.sync`, `cp.async`), roofline positioning, shared-memory bank conflict derivation, and quantization-aware operand packing.
+A from-scratch CUDA implementation of a sparse Mixture-of-Experts inference kernel, progressively optimized through capacity-aware routing, PTX-level tensor-core intrinsics, shared-memory swizzling, and quantization (FP8/INT8/INT4). Each optimization step is profiled with Nsight Compute and documented with derived root-cause analysis — PTX intrinsics (`ldmatrix`, `mma.sync`, `cp.async`), roofline positioning, shared-memory bank conflict derivation, and quantization-aware operand packing. **Best result: INT4 PTX kernel achieves a 2.6× end-to-end speedup over the FP16 baseline.**
 
 **Hardware:** NVIDIA L4 (Ada Lovelace, SM 89). `fp4` is excluded — not supported on this GPU.
 
+## Investigation Arc
+
+The project follows a systematic optimization sequence, including deliberate negative results:
+
+1. **Fusion** (`unfused` → `baseline` → `capacity`): kernel fusion and capacity-aware routing reduced latency from 2034 ms to 37.2 ms.
+2. **Swizzling** (`swizzle_xor`, `swizzle_ldmatrix`, `swizzle_autotune`): three approaches to eliminating shared-memory bank conflicts via address remapping. All resulted in regressions. A mathematical derivation ([Run 4](prof/md/run4/ncu_details.md)) proved this is structurally unavoidable given the `cp.async` transaction size and tile geometry — swizzling was ruled out on principle, not abandoned by trial and error.
+3. **Quantization** (`capacity_int8_ptx`, `capacity_fp8_ptx`, `capacity_int4_ptx`): hand-written PTX `mma.sync` kernels with manual operand packing. INT4 achieves 2.6× speedup and approaches compute-bound behaviour; FP8 is counter-intuitively *slower* than FP16 due to conversion overhead (documented in [Run 5](prof/md/run5/ncu_details.md)).
+
 ## Performance Highlights
 
-All kernels use double-buffered WMMA tiles (`16×16×16`). **TC** = Tensor Cores; **CAP** = capacity-factor routing.
+All kernels use double-buffered WMMA tiles (`16×16×16`). **CAP** = capacity-factor routing. † = intentional negative result; regression fully explained in linked profile.
 
 | Quant | CAP | Kernel | ms | Profile | Approach | Notes |
 |----|----|----|------:|--------|-----------|---------|
@@ -14,19 +22,13 @@ All kernels use double-buffered WMMA tiles (`16×16×16`). **TC** = Tensor Cores
 | fp16 | No | [baseline](kernels/baseline.cu) | 54 | [Run 1](prof/md/run1/ncu_details.md) | Fully fused with per-token routing | Over-alloc of per-expert buffers |
 | fp16 | Yes | [capacity](kernels/capacity.cu) | 37.2 | [Run 1](prof/md/run1/ncu_details.md) | Capacity-aware routing | Reference baseline for all subsequent work |
 | fp16 | Yes | [capacity_ldmatrix](kernels/capacity_ldmatrix.cu) | 34.5 | — | PTX `ldmatrix` + `mma.sync` | No explicit unswizzle required |
-| fp16 | Yes | [swizzle_xor](kernels/swizzle_xor.cu) | 70 | [Run 2](prof/md/run2/ncu_details.md), [Run 3](prof/md/run3/ncu_details.md) | XOR swizzle + unswizzle | Instruction overhead exceeded bank-conflict savings |
+| fp16 | Yes | [swizzle_xor](kernels/swizzle_xor.cu) | 70 † | [Run 2](prof/md/run2/ncu_details.md), [Run 3](prof/md/run3/ncu_details.md) | XOR swizzle + unswizzle | Instruction overhead exceeded bank-conflict savings |
 | fp16 | Yes | [swizzle_ldmatrix](kernels/swizzle_ldmatrix.cu) | — | [Run 2](prof/md/run2/ncu_details.md) | Swizzle without unswizzle, PTX `ldmatrix` | Layout co-designed with `mma.sync` fragment |
-| fp16 | Yes | [swizzle_autotune](kernels/swizzle_autotune.cu) | 45.5 | [Run 4](prof/md/run4/ncu_details.md) | Exhaustive row-mask search | Structurally impossible to resolve conflicts via swizzle |
+| fp16 | Yes | [swizzle_autotune](kernels/swizzle_autotune.cu) | 45.5 † | [Run 4](prof/md/run4/ncu_details.md) | Exhaustive row-mask search | Structurally impossible to resolve conflicts via swizzle |
 | int8 | Yes | [capacity_int8](kernels/capacity_int8.cu) | 38.9 | — | INT8 via WMMA API | |
 | int8 | Yes | [capacity_int8_ptx](kernels/capacity_int8_ptx.cu) | 30.6 | [Run 5](prof/md/run5/ncu_details.md) | PTX `mma.sync`, manual 4×int8→int32 pack | +19% vs FP16 |
-| fp8 | Yes | [capacity_fp8_ptx](kernels/capacity_fp8_ptx.cu) | 38.7 | [Run 5](prof/md/run5/ncu_details.md) | PTX `mma.sync`, manual FP→INT pack | −5% vs FP16 (instruction explosion) |
+| fp8 | Yes | [capacity_fp8_ptx](kernels/capacity_fp8_ptx.cu) | 38.7 † | [Run 5](prof/md/run5/ncu_details.md) | PTX `mma.sync`, manual FP→INT pack | −5% vs FP16; 2.3× instruction count increase |
 | int4 | Yes | [capacity_int4_ptx](kernels/capacity_int4_ptx.cu) | 14 | [Run 5](prof/md/run5/ncu_details.md) | PTX `mma.sync`, nibble-packed B operands | **+2.6× vs FP16**; near compute-bound |
-
-## TL;DR
-
-- Capacity-aware packing reduces DRAM footprint and enables grouped GEMMs.
-- CAP = ceil(N * k / num_experts * capacity_factor), then rounded up to the nearest WMMA tile multiple.
-- Overflow policy: drop excess routes beyond `CAP`.
 
 ## Architecture
 
@@ -100,18 +102,13 @@ Full NCU capture command:
 ncu --import-source yes --set full --export prof/ncu/capacity.ncu-rep ./bin/profile_capacity --kernel=capacity --warmup=5 --runs=10
 ```
 
-## Building & running
+## Building & Running
 
 Quick start (Linux, CUDA enabled):
 
 ```bash
 make clean && make KERNEL=baseline
 # then run the produced binary in bin/ (project-specific runner)
-```
-
-Full NCU profile:
-```bash
-ncu --import-source yes --set full --export prof/ncu/capacity.ncu-rep ./bin/profile_capacity --kernel=capacity --warmup=5 --runs=10
 ```
 
 If your GPU memory is limited, try the `capacity` variant which reduces per-expert allocations.
