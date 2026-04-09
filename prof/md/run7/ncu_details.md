@@ -40,7 +40,7 @@ Notes: where the WMMA API lacks a convenience type (FP8), kernel implementations
 The animation below demonstrates how manual packing (4 × int8 into 1 int32) prepares operands for subsequent `mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32` execution:
 
 <video controls loop muted playsinline>
-	<source src="../../images/run7/m16n8k32_int8_ptx_load.mp4" type="video/mp4">
+	<source src="https://github.com/user-attachments/assets/27d25ac7-e0bc-4680-b7cf-5d675062f1d0" type="video/mp4">
 	Your browser does not support the video tag.
 </video>
 
