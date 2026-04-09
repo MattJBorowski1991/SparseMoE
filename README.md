@@ -1,26 +1,26 @@
 # Sparse Mixture-of-Experts (MoE)
 
-Implementation of a sparse Mixture-of-Experts CUDA workflow. The repository contains multiple execution variants with detailed profiling analysis.
+A from-scratch CUDA implementation of a sparse Mixture-of-Experts inference kernel, progressively optimized through capacity-aware routing, PTX-level tensor-core intrinsics, shared-memory swizzling, and quantization (FP8/INT8/INT4). Each optimization step is profiled with Nsight Compute and documented with derived root-cause analysis — PTX intrinsics (`ldmatrix`, `mma.sync`, `cp.async`), roofline positioning, shared-memory bank conflict derivation, and quantization-aware operand packing.
+
+**Hardware:** NVIDIA L4 (Ada Lovelace, SM 89). `fp4` is excluded — not supported on this GPU.
 
 ## Performance Highlights
 
-All kernels are based on the double buffered wmma kernel with standard tile sizes `16x16x16`. The hardware I used (L4, Ada Lovelace, sm_89) does not support `fp4` hence it is excluded from the analysis.
+All kernels use double-buffered WMMA tiles (`16×16×16`). **TC** = Tensor Cores; **CAP** = capacity-factor routing.
 
-**Tensor Cores** = **TC**; **CAP** = capacity factor for per-expert buffers; 
-
-| Quant | CAP | Kernel | ms | Profile | Setup | Notes |
-|----|----|----|-------|--------|-----------|---------|
-| fp16 | No | [unfused](kernels/unfused.cu) | 2034 | [Run 1](prof/md/run1/ncu_details.md) | per-stage separate global kernels | overalloc of per-expert buffers |
-| fp16 | No | [baseline](kernels/baseline.cu) | 54 | [Run 1](prof/md/run1/ncu_details.md) | full kernel fusion with per-token routing  | as above  |
-| fp16 | Yes  | [capacity](kernels/capacity.cu) | 37.2 | [Run 1](prof/md/run1/ncu_details.md)  | capacity-aware routing |  |
-| fp16 | Yes  | [capacity_ldmatrix](kernels/capacity_ldmatrix.cu) | 34.5 | [Run 2](prof/md/run2/ncu_details.md) | inject PTX  | ldmatrix, mma.sync |
-| fp16 | Yes | [swizzle_xor](kernels/swizzle_xor.cu) | 70 | [Run 3](prof/md/run3/ncu_details.md), [Run 4](prof/md/run4/ncu_details.md)| Swizzle + Unswizzle |  |
-| fp16 | Yes | [swizzle_ldmatrix](kernels/swizzle_ldmatrix.cu) | 45.5 | [Run 3](prof/md/run3/ncu_details.md), [Run 5](prof/md/run5/ncu_details.md) | Swizzle, no Unswizzle, inject PTX | ldmatrix, mma.sync |
-| fp16 | Yes | [swizzle_autotune](kernels/swizzle_autotune.cu) | 45.5 | [Run 6](prof/md/run6/ncu_details.md) | Swizzle: robust analysis | No perf improv possible |
-| int8 | Yes | [capacity_int8](kernels/capacity_int8.cu) | 38.9 | - | int8 with WMMA | |
-| int8 | Yes | [capacity_int8_ptx](kernels/capacity_int8_ptx.cu) | 30.6 | [Run 7](prof/md/run7/ncu_details.md) | inject PTX | manual pack |
-| fp8 | Yes | [capacity_fp8_ptx](kernels/capacity_fp8_ptx.cu) | 38.7 | [Run 7](prof/md/run7/ncu_details.md) | inject PTX | manual pack |
-| int4 | Yes | [capacity_int4_ptx](kernels/capacity_int4_ptx.cu) | 14 | [Run 7](prof/md/run7/ncu_details.md) | inject PTX | manual pack |
+| Quant | CAP | Kernel | ms | Profile | Approach | Notes |
+|----|----|----|------:|--------|-----------|---------|
+| fp16 | No | [unfused](kernels/unfused.cu) | 2034 | [Run 1](prof/md/run1/ncu_details.md) | Per-stage global kernels | Over-alloc of per-expert buffers |
+| fp16 | No | [baseline](kernels/baseline.cu) | 54 | [Run 1](prof/md/run1/ncu_details.md) | Fully fused with per-token routing | Over-alloc of per-expert buffers |
+| fp16 | Yes | [capacity](kernels/capacity.cu) | 37.2 | [Run 1](prof/md/run1/ncu_details.md) | Capacity-aware routing | Reference baseline for all subsequent work |
+| fp16 | Yes | [capacity_ldmatrix](kernels/capacity_ldmatrix.cu) | 34.5 | — | PTX `ldmatrix` + `mma.sync` | No explicit unswizzle required |
+| fp16 | Yes | [swizzle_xor](kernels/swizzle_xor.cu) | 70 | [Run 2](prof/md/run2/ncu_details.md), [Run 3](prof/md/run3/ncu_details.md) | XOR swizzle + unswizzle | Instruction overhead exceeded bank-conflict savings |
+| fp16 | Yes | [swizzle_ldmatrix](kernels/swizzle_ldmatrix.cu) | — | [Run 2](prof/md/run2/ncu_details.md) | Swizzle without unswizzle, PTX `ldmatrix` | Layout co-designed with `mma.sync` fragment |
+| fp16 | Yes | [swizzle_autotune](kernels/swizzle_autotune.cu) | 45.5 | [Run 4](prof/md/run4/ncu_details.md) | Exhaustive row-mask search | Structurally impossible to resolve conflicts via swizzle |
+| int8 | Yes | [capacity_int8](kernels/capacity_int8.cu) | 38.9 | — | INT8 via WMMA API | |
+| int8 | Yes | [capacity_int8_ptx](kernels/capacity_int8_ptx.cu) | 30.6 | [Run 5](prof/md/run5/ncu_details.md) | PTX `mma.sync`, manual 4×int8→int32 pack | +19% vs FP16 |
+| fp8 | Yes | [capacity_fp8_ptx](kernels/capacity_fp8_ptx.cu) | 38.7 | [Run 5](prof/md/run5/ncu_details.md) | PTX `mma.sync`, manual FP→INT pack | −5% vs FP16 (instruction explosion) |
+| int4 | Yes | [capacity_int4_ptx](kernels/capacity_int4_ptx.cu) | 14 | [Run 5](prof/md/run5/ncu_details.md) | PTX `mma.sync`, nibble-packed B operands | **+2.6× vs FP16**; near compute-bound |
 
 ## TL;DR
 
@@ -59,16 +59,46 @@ Notes:
 - Padding: slots between `m` (actual routed tokens) and `CAP` are zeroed before GEMMs so padded rows do not affect results.
 - Overflow: any route that maps to a slot ≥ `CAP` is dropped. To avoid out-of-bounds reads, the implementation clamps `expert_counts[e] = min(expert_counts[e], CAP)` after packing.
 
-## Kernels and important files
+## Kernels and Important Files
 
-- Kernel implementations: `kernels/unfused.cu`, `kernels/baseline.cu`, `kernels/capacity.cu`.
-- Host-side allocation and data plumbing: `inputs/data.cu`, `inputs/data.h`.
-- Driver entry point: `drivers/main.cu`.
-- Profiling notes and NCU outputs: `prof/txt/` and `prof/md/`.
+**Kernel implementations** (`kernels/`):
+
+| File | Description |
+|---|---|
+| `unfused.cu` | Per-stage global kernels — dispatch, expert GEMMs, combine as separate launches |
+| `baseline.cu` | Fully fused single kernel with per-token routing |
+| `capacity.cu` | Capacity-aware fused kernel — FP16 WMMA reference baseline |
+| `capacity_ldmatrix.cu` | PTX `ldmatrix` + `mma.sync` without unswizzle overhead |
+| `swizzle_xor.cu` | XOR-based shared-memory swizzle with `wmma` unswizzle pass |
+| `swizzle_ldmatrix.cu` | Swizzle co-designed with `ldmatrix` consumer — no unswizzle required |
+| `swizzle_autotune.cu` | Exhaustive row-mask search over all valid chunk-level swizzles |
+| `capacity_int8.cu` | INT8 via WMMA C++ API |
+| `capacity_int8_ptx.cu` | INT8 via PTX `mma.sync` with manual 4×int8→int32 operand packing |
+| `capacity_fp8_ptx.cu` | FP8 via PTX `mma.sync` with manual FP→INT conversion |
+| `capacity_int4_ptx.cu` | INT4 via PTX `mma.sync` with nibble-packed B-matrix operands |
+
+**Supporting files:**
+- Host-side allocation and data plumbing: `inputs/data.cu`, `inputs/data.h`
+- Kernel argument structs: `include/moe_args.h`, `include/config.h`
+- Driver entry point: `drivers/main.cu`
+- Profiling notes and NCU outputs: `prof/txt/` and `prof/md/`
 
 ## Profiling
 
-Run the provided experiments (see `Makefile`) and collect Nsight Compute (`ncu`) reports for the `baseline` and `capacity` variants. The `prof/md/run1/notes.md` file contains a concise comparison of an example run that demonstrates the performance and memory throughput differences.
+All profiling was done with **Nsight Compute** (`ncu`) on an NVIDIA L4 (Ada Lovelace, SM 89). Reports cover throughput, roofline, compute workload, memory workload, scheduler statistics, warp state statistics, and instruction statistics.
+
+| Run | File | Kernels Covered |
+|---|---|---|
+| Run 1 | [prof/md/run1/ncu_details.md](prof/md/run1/ncu_details.md) | `unfused`, `baseline`, `capacity` |
+| Run 2 | [prof/md/run2/ncu_details.md](prof/md/run2/ncu_details.md) | `swizzle_xor`, `swizzle_ldmatrix` (initial investigation) |
+| Run 3 | [prof/md/run3/ncu_details.md](prof/md/run3/ncu_details.md) | `swizzle_xor` vs `capacity` (detailed analysis) |
+| Run 4 | [prof/md/run4/ncu_details.md](prof/md/run4/ncu_details.md) | `swizzle_autotune` — robust swizzling framework |
+| Run 5 | [prof/md/run5/ncu_details.md](prof/md/run5/ncu_details.md) | `capacity_fp8_ptx`, `capacity_int8_ptx`, `capacity_int4_ptx` — quantization study |
+
+Full NCU capture command:
+```bash
+ncu --import-source yes --set full --export prof/ncu/capacity.ncu-rep ./bin/profile_capacity --kernel=capacity --warmup=5 --runs=10
+```
 
 ## Building & running
 
@@ -86,12 +116,11 @@ ncu --import-source yes --set full --export prof/ncu/capacity.ncu-rep ./bin/prof
 
 If your GPU memory is limited, try the `capacity` variant which reduces per-expert allocations.
 
-## Next steps / ideas
+## Potential Next Steps
 
-- Per-kernel Nsight Compute analysis to identify cache/DRAM bottlenecks.
-- Profile both for prefill (large N) and decode (N=1)
-- Different quantizations with accuracy measurement
-- Grouped GEMM: concatenate expert buffers and run a batched/grouped GEMM, masking out padded rows afterward.
-- Tune tile sizes and shared-memory usage for better occupancy.
+- Quantization accuracy measurement: per-variant max absolute error / cosine similarity vs FP16 baseline.
+- Grouped GEMM: concatenate expert buffers and run a batched/grouped GEMM, masking padded rows.
+- Decode-path profiling (N=1, large `num_batches`) vs prefill (large N).
+- Tile size and occupancy tuning for alternative hardware targets.
 
 ---

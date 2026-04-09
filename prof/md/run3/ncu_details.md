@@ -1,210 +1,143 @@
-# Run 3 — Nsight Compute: Swizzling Attempt 1
+# Nsight Compute Analysis — swizzle_xor vs capacity
 
-Kernels profiled: [capacity.cu](kernels/capacity.cu), [swizzle_xor.cu](kernels/swizzle_xor.cu) and [swizzle_ldmatrix.cu](kernels/swizzle_ldmatrix.cu).
+Kernels profiled: [swizzle_xor.cu](kernels/swizzle_xor.cu) and [capacity.cu](kernels/capacity.cu).
 
-## Overview
-This report summarizes the two applications of swizzling below and compares them to the base version [capacity.cu](kernels/capacity.cu):
-- [swizzle_xor](kernels/swizzle_xor.cu) - XOR swizzle
-- [swizzle_ldmatrix](kernels/swizzle_ldmatrix.cu) - swizzle via `ldmatrix.sync.aligned` and `mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32` 
+## Summary
 
-Both swizzling approaches / thread mapping permutations were applied at 16-byte chunk granularity to match the `cp.async` transaction size and reduce bookkeeping overhead. The aim of this file is to document and explain why neither of the applications yielded performance improvement.
+- Shared-store bank conflicts decreased ~37%; DRAM traffic also reduced as L2 absorbed more (hit rate +93%).
+- Swizzling increased on‑chip work and memory‑dependency latency (extra copies/unswizzle; degraded L1 → more L2 hits).
+- Compute IPC roughly doubled, but instruction counts and long scoreboard stalls rose sharply.
+- Net effect: ~+90% longer duration — external DRAM pressure was traded for increased on‑chip serialization/latency.
 
+## Key Findings
 
-## XOR swizzle
+- Shared-memory uncoalesced accesses reduced (positive).
+- Swizzling reduced shared-store bank conflicts (~37%), but shared-load bank conflicts did not improve.
+- Long scoreboard stalls increased substantially, becoming the dominant bottleneck.
+- Compute throughput rose significantly, but memory throughput and DRAM throughput fell, resulting in a longer overall duration.
+- The kernel remains memory-bound on the roofline.
 
-```cpp
-        for (int i = lane_id * 8; i < WMMA_M * WMMA_K; i += 32 * 8) {
-            int row = i / WMMA_K;
-            int col = i % WMMA_K;
-            int col_chunk = col >> 3; // 8 half = 16B chunk
-            int col_chunk_swz = col_chunk ^ (row & SWIZZLE_CHUNK_MASK);
-            int col_swz = col_chunk_swz << 3;
+## Detailed Analysis
 
-            char* dst = (char*)&As[stage_buf][warp_id][row][col_swz];
-```
+### Bottlenecks
 
-Subsequently, the unswizzle step is applied prior to invoking `wmma::load_matrix_sync`, the swizzled tile in shared memory is restored (unswizzled) to the linear layout expected by the WMMA API.
+The estimated speedups for main bottlenecks changed compared to `capacity.cu`:
 
-The transformations (swizzle + unswizzle) add index arithmetic and increase instruction count.
+- Uncoalesced Shared Accesses: reduced from ~66% to ~38% (improvement).
+- Shared Store Bank Conflicts: reduced from ~42% to ~18% (load bank conflicts remain unresolved).
+- Long Scoreboard Stalls: increased from ~13% to ~32% (new major issue).
+- Theoretical occupancy: unchanged.
 
+![swizzle_xor - Bottlenecks](../../images/run4/swizzle_xor_bottlenecks.jpg)
 
-The XOR swizzle implemented in this experiment operates at 16‑byte chunk granularity (groups of eight 2‑byte elements). In this pattern odd rows swap the two eight‑chunk halves; an illustrative mapping follows:
+### Throughput
 
-| Row | Chunks 0–7 | Chunks 8–15 |
-|---:|:---|:---|
-| 0 | 0 1 2 3 4 5 6 7 | 8 9 10 11 12 13 14 15 |
-| 1 | 8 9 10 11 12 13 14 15 | 0 1 2 3 4 5 6 7 |
-| 2 | 0 1 2 3 4 5 6 7 | 8 9 10 11 12 13 14 15 |
-| 3 | 8 9 10 11 12 13 14 15 | 0 1 2 3 4 5 6 7 |
+Compute throughput increased by 103%, but kernel duration still worsened (+90%) because:
 
-This compact representation highlights the per‑row XOR permutation used for the shared‑memory tile layout.
+- Overall memory throughput dropped to ~68% of peak.
+- DRAM throughput dropped to ~61% of peak.
+- Aggregate memory bandwidth decreased ~30% to 182.5 GB/s.
 
-### Example — XOR swizzle (16-byte chunks)
-```cpp
-// col: column index (element index within row)
-// row: row index
-// We operate on 16-byte chunks = groups of 8 elements (2 bytes each)
-int chunk = col >> 3;                 // chunk index (col / 8)
-int lane = col & 0x7;                 // position within chunk
+![swizzle_xor - Throughput](../../images/run4/swizzle_xor_throughput.jpg)
 
-// Simple per-row XOR swizzle: flip halves for odd rows
-int chunk_swizzled = chunk ^ (row & 1);
+![swizzle_xor - Throughput %](../../images/run4/swizzle_xor_throughput_p.jpg)
 
-// Reconstruct swizzled column index (in elements)
-int col_swizzled = (chunk_swizzled << 3) | lane;
+### Roofline
 
-// --- inverse (unswizzle) ---
-int chunk_unswizzled = chunk_swizzled ^ (row & 1);
-int col_unswizzled = (chunk_unswizzled << 3) | lane;
+Both kernels remain strongly memory bound according to the roofline analysis.
 
-// Use `col_swizzled` as the shared-memory destination index when writing
-// and apply the inverse before calling WMMA load.
-```
+![swizzle_xor - Roofline](../../images/run4/swizzle_xor_roofline.jpg)
 
-## ldmatrix swizzle
+### Compute Workload
 
-Replace `wmma::load_matrix_sync` and `wmma::mma_sync` with a swizzle using a PTX approach:
+Observed compute-workload metrics show ~doubling of Instruction Per Clock as well as SM core instruction throughput ("SM busy [%]").
 
-1. `cp.async` stages tiles into shared memory in a simple linear layout.
-2. `ldmatrix` loads warp fragments directly from shared memory into registers.
-3. `mma.sync` consumes those registers directly for tensor-core MMA operations.
+![swizzle_xor - Compute Workload](../../images/run4/swizzle_xor_compute_workload.jpg)
 
-My intention of this approach was to move closer to the layout strategy used in low-level libraries such as CUTLASS.
+### Memory Workload
 
-```cpp
-static __device__ __forceinline__ void ldmatrix_a_m16n8k16(
-    const half* tile,
-    int lane_id,
-    int ld,
-    unsigned (&a)[4]
-)
-{
-    // Matrix order expected by mma.sync: top-left, bottom-left, top-right, bottom-right.
-    int group = lane_id >> 3;
-    int row = (lane_id & 7) + ((group & 1) << 3);
-    int col = (group >> 1) << 3;
-    unsigned addr = smem_addr(tile + row * ld + col);
-    asm volatile(
-        "ldmatrix.sync.aligned.x4.m8n8.shared.b16 {%0, %1, %2, %3}, [%4];\n"
-        : "=r"(a[0]), "=r"(a[1]), "=r"(a[2]), "=r"(a[3])
-        : "r"(addr));
-}
+- Memory throughput decreased ~30% to 182.5 GB/s.
+- 'Mem Busy' decreased ~31% and max bandwidth decreased ~21%.
+- L1 hit rate decreased ~57%; L2 hit rate increased ~93% (more L2 servicing).
+- Swizzling reduced shared-store bank conflicts by ~37%, but shared-load bank conflicts did not improve.
 
-static __device__ __forceinline__ void ldmatrix_b_m16n8k16(
-    const half* tile,
-    int lane_id,
-    int ld,
-    int col_block,
-    unsigned (&b)[2]
-)
-{
-    // For .x2, threads 16-31 can reuse the lower-thread addresses.
-    int group = (lane_id >> 3) & 1;
-    int row = (lane_id & 7) + (group << 3);
-    unsigned addr = smem_addr(tile + row * ld + col_block);
-    asm volatile(
-        "ldmatrix.sync.aligned.x2.trans.m8n8.shared.b16 {%0, %1}, [%2];\n"
-        : "=r"(b[0]), "=r"(b[1])
-        : "r"(addr));
-}
+![swizzle_xor - Memory Workload 1](../../images/run4/swizzle_xor_memory_workload_1.jpg)
 
-static __device__ __forceinline__ void mma_m16n8k16_f32(
-    const unsigned (&a)[4],
-    const unsigned (&b)[2],
-    float (&c)[4]
-)
-{
-    asm volatile(
-        "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
-        "{%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9}, {%0, %1, %2, %3};\n"
-        : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
-        : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b[0]), "r"(b[1]));
-}
-```
+![swizzle_xor - Memory Workload 2](../../images/run4/swizzle_xor_memory_workload_2.jpg)
 
-## NCU — High-level results
+Close-up on the DRAM throughput reduction:
 
-Summary: both swizzling attempts resulted in deterioration of perfomance due to the decrease in Memory & DRAM thoughput. 
+![swizzle_xor - Memory Workload 3](../../images/run4/swizzle_xor_memory_workload_3.jpg)
 
-![Throughput](../../images/run2/throughput_chart.png)
+### Scheduler Statistics
 
-### GPU Speed Of Light Throughput
+Scheduler eligibility and issue rates improved (eligible ↑170% toward 1.0, issued ↑100%), but these improvements could not overcome the new on-chip latency sources.
 
-| Metric Name | Metric Unit | capacity | swizzle_xor | swizzle_ldmatrix |
-|---|---|---:|---:|---:|
-| DRAM Frequency | GHz | 6.24 | 6.24 | 6.24 |
-| SM Frequency | MHz | 804.67 | 822.95 | 803.42 |
-| Elapsed Cycles | cycle | 30063030 | 57658205 | 37175334 |
-| Memory Throughput | % | 86.24 | 67.62 | 79.42 |
-| DRAM Throughput | % | 86.24 | 61.07 | 79.42 |
-| Duration | ms | 36.97 | 69.37 | 45.81 |
-| L1/TEX Cache Throughput | % | 84.05 | 70.02 | 52.05 |
-| L2 Cache Throughput | % | 32.88 | 44.36 | 62.63 |
-| SM Active Cycles | cycle | 29320941.95 | 55109655.78 | 35857617.72 |
-| Compute (SM) Throughput | % | 33.63 | 67.62 | 29.40 |
+![swizzle_xor - Scheduler Statistics](../../images/run4/swizzle_xor_scheduler_stats.jpg)
 
-Comments:
-- capacity: INF This workload is utilizing greater than 80.0% of the available compute or memory performance of the device. To further improve performance, work will likely need to be shifted from the most utilized to another unit. Start by analyzing DRAM in the Memory Workload Analysis section.
-- swizzle_xor: INF Compute and Memory are well-balanced: To reduce runtime, both computation and memory traffic must be reduced. Check both the Compute Workload Analysis and Memory Workload Analysis sections.
-- swizzle_ldmatrix: OPT Memory is more heavily utilized than Compute: Look at the Memory Workload Analysis section to identify the DRAM bottleneck. Check memory replay (coalescing) metrics to make sure you're efficiently utilizing the bytes transferred. Also consider whether it is possible to do more work per memory access (kernel fusion) or whether there are values you can (re)compute.
+### Warp State Statistics
+
+Warp cycle activity improved (warp cycles reduced ~50%), indicating better warp-level work distribution.
+
+![swizzle_xor - Warp State Statistics](../../images/run4/swizzle_xor_warp_state_stats.jpg)
+
+### Instruction Statistics
+
+Instruction counts increased substantially (executed and issued ↑~270%), contributing to higher on-chip pressure and longer execution.
+
+![swizzle_xor - Instruction Statistics](../../images/run4/swizzle_xor_instruction_stats.jpg)
 
 ### Launch Statistics
 
-> **Comment:**
+No major changes in launch parameters other than a modest increase in register pressure.
 
-| Metric Name | Metric Unit | capacity | swizzle_xor | swizzle_ldmatrix |
-|---|---|---:|---:|---:|
-| Block Size |  | 256 | 256 | 256 |
-| Function Cache Configuration |  | CachePreferNone | CachePreferNone | CachePreferNone |
-| Grid Size |  | 2048 | 2048 | 2048 |
-| Registers Per Thread | register/thread | 72 | 80 | 72 |
-| Shared Memory Configuration Size | KiB | 102.40 | 102.40 | 102.40 |
-| Driver Shared Memory Per Block | KiB/block | 1.02 | 1.02 | 1.02 |
-| Dynamic Shared Memory Per Block | byte/block | 0 | 0 | 0 |
-| Static Shared Memory Per Block | KiB/block | 33.02 | 32.77 | 32.77 |
-| # SMs | SM | 58 | 58 | 58 |
-| Stack Size |  | 1024 | 1024 | 1024 |
-| Threads | thread | 524288 | 524288 | 524288 |
-| # TPCs |  | 29 | 29 | 29 |
-| Enabled TPC IDs |  | all | all | all |
-| Uses Green Context |  | 0 | 0 | 0 |
-| Waves Per SM |  | 11.77 | 11.77 | 11.77 |
+![swizzle_xor - Launch Statistics](../../images/run4/swizzle_xor_launch_stats.jpg)
 
-## Occupancy
+### GPU and Memory Workload
 
-| Metric Name | Metric Unit | capacity | swizzle_xor | swizzle_ldmatrix |
-|---|---|---:|---:|---:|
-| Block Limit SM | block | 24 | 24 | 24 |
-| Block Limit Registers | block | 3 | 3 | 3 |
-| Block Limit Shared Mem | block | 3 | 3 | 3 |
-| Block Limit Warps | block | 6 | 6 | 6 |
-| Theoretical Active Warps per SM | warp | 24 | 24 | 24 |
-| Theoretical Occupancy | % | 50 | 50 | 50 |
-| Achieved Occupancy | % | 49.19 | 48.99 | 48.93 |
-| Achieved Active Warps Per SM | warp | 23.61 | 23.51 | 23.49 |
+Average active cycles increased for DRAM by ~33%; for SM, SMSP, L1 and L2 the average active cycles rose by ~90%.
 
-Comments (same for all):
-- OPT Est. Local Speedup: 50%. The 6.00 theoretical warps per scheduler this kernel can issue according to its occupancy are below the hardware maximum of 12. This kernel's theoretical occupancy (50.0%) is limited by the number of required registers, and the required amount of shared memory.
+![swizzle_xor - GPU and Memory Workload](../../images/run4/swizzle_xor_gpu_and_memory_workload.jpg)
 
-## GPU and Memory Workload Distribution
+## Summary
 
-| Metric Name | Metric Unit | capacity | capacity % | swizzle_xor | swizzle_xor % | swizzle_ldmatrix | swizzle_ldmatrix % |
-|---|---|---:|---:|---:|---:|---:|---:|
-| Average DRAM Active Cycles | cycle | 199,112,960 | - | 264,573,200 | - | 227,192,048 | - |
-| Average L1 Active Cycles | cycle | 29,320,942 | - | 55,109,656 | - | 35,857,618 | - |
-| Average L2 Active Cycles | cycle | 30,315,918 | - | 56,303,511 | - | 37,590,135 | - |
-| Average SM Active Cycles | cycle | 29,320,942 | - | 55,109,656 | - | 35,857,618 | - |
-| Average SMSP Active Cycles | cycle | 29,318,293 | - | 55,079,822 | - | 35,844,260 | - |
-| Total DRAM Elapsed Cycles | cycle | 1,385,345,024 | 11.1% | 2,599,341,056 | 10.9% | 1,716,303,872 | 11.1% |
-| Total L1 Elapsed Cycles | cycle | 1,723,078,788 | 13.8% | 3,309,925,018 | 13.9% | 2,141,142,518 | 13.8% |
-| Total L2 Elapsed Cycles | cycle | 732,076,992 | 5.9% | 1,378,815,744 | 5.8% | 906,970,200 | 5.9% |
-| Total SM Elapsed Cycles | cycle | 1,723,078,788 | 13.8% | 3,309,925,018 | 13.9% | 2,141,142,518 | 13.8% |
-| Total SMSP Elapsed Cycles | cycle | 6,892,315,152 | 55.3% | 13,239,700,072 | 55.5% | 8,564,570,072 | 55.4% |
-| **Sum of Total Elapsed** | **cycle** | **12,455,894,744** | **100.0%** | **23,837,706,908** | **100.0%** | **15,470,129,180** | **100.0%** |
+`swizzle_xor` partially addressed the shared-memory bottlenecks of `capacity.cu`: shared-store bank conflicts dropped ~37% and uncoalesced shared accesses decreased. The higher L2 hit rate (+93%) further reduced DRAM traffic.
 
-Note:
-- The ratio between `Total ... Elapsed Cycles` and `Average ... Active Cycles` is **not expected to be identical** across DRAM, L1, L2, SM, and SMSP.
-- For each subsystem, the `Average ... Active Cycles` value is averaged over the profiled kernel passes/instances collected in that Nsight run.
-- Percentage cells are `-` for `Average ... Active Cycles` rows.
-- For `Total ... Elapsed Cycles`, percentages are computed per kernel as `(row total / that kernel's sum of totals)`.
-- These counters are collected at different hardware scopes and with different aggregation semantics, so cross-subsystem ratios should not be compared as if they shared one common denominator.
+However, the approach introduces an unswizzle pass and additional copy instructions to satisfy `wmma::load_matrix_sync`'s requirement for a linear row-major layout in shared memory. This inflated instruction counts by ~270%, drove long scoreboard stalls from ~13% to ~32% of warp cycles, and degraded L1 effectiveness — shifting the dominant bottleneck from DRAM and shared-memory conflicts to on-chip instruction throughput and latency.
+
+**Net result: +90% longer kernel duration.** The external (DRAM/shared-memory) bottleneck was traded for a new on-chip serialization bottleneck.
+
+The path forward is `swizzle_ldmatrix`: by co-designing the swizzle layout with the PTX `ldmatrix`/`mma.sync` consumption pattern, the unswizzle overhead is eliminated entirely and the tensor-core data path is fed directly from the conflict-free swizzled layout.
+
+## Adding `ldmatrix`
+
+### Motivation
+
+`swizzle_xor` swizzles the stored layout but still pays an extra reorder/unswizzle cost to restore the linear layout required by `wmma::load_matrix_sync`. `swizzle_ldmatrix` eliminates this overhead by co-designing the swizzle layout with the PTX-level `ldmatrix`/`mma.sync` consumption path.
+
+Concrete goals:
+
+- Reduce shared-memory bank conflicts at the point that matters most (the tensor-core load).
+- Avoid extra shared-memory reshuffling (no unswizzle pass).
+- Feed `ldmatrix`/`mma.sync` in a layout they can consume directly.
+
+Note: PTX is not strictly required — what matters is that the consumer reads the swizzled layout directly without a fixup pass. PTX `ldmatrix`/`mma.sync` provides the pointer-level control that makes this possible.
+
+### Why `swizzle_ldmatrix` Does Not Require Unswizzle
+
+**Key insight.** Swizzling is an address remapping applied at the **register → SRAM store step**: when writing a tile into shared memory, each element is stored at a remapped address (chosen to spread elements across distinct banks). The element values in DRAM and registers are untouched; only *where* each element lives in SRAM changes. The consequence is that a consumer reading SRAM must either (a) know the remapped layout and follow it with custom per-thread pointers, or (b) undo the remapping (unswizzle) before reading. `ldmatrix` enables (a); `wmma::load_matrix_sync` is forced into (b).
+
+`wmma::load_matrix_sync` requires a **linear row-major** layout in shared memory. The hardware reads elements at `&tile[row * ld + col]` and maps them to registers according to a fixed hardware scheme. If the data has been swizzled (addresses rearranged), the hardware still reads at those same linear addresses and consumes the wrong values — so the data must be unswizzled first to restore the expected linear order.
+
+`ldmatrix` works differently: **each of the 32 threads in the warp supplies its own pointer** into shared memory. The hardware gathers 8 bytes from each 8-byte-aligned address and distributes the values into registers according to the `mma.sync` fragment layout. This means:
+
+- You design the swizzle so that the address thread `t` supplies lands on a different bank than the addresses supplied by threads in the same 8-thread group.
+- All 32 addresses are issued simultaneously, each hitting a distinct bank — no conflict.
+- The gathered register values are already in the exact layout `mma.sync` expects, because the swizzle was designed to match that layout from the start.
+
+In short:
+
+- `wmma::load_matrix_sync` — layout is **hardware-fixed**; you must conform to it (linear data required; swizzled data must be unswizzled first).
+- `ldmatrix` — layout is **pointer-driven**; the swizzled write addresses and the PTX read addresses are co-designed so the data lands exactly where the hardware needs it. The swizzled layout *is* the consumption layout — there is no "before" and "after".
+
+That is why `swizzle_ldmatrix` removes the unswizzle overhead entirely.

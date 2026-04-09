@@ -1,102 +1,121 @@
-# Nsight Compute Analysis — swizzle_xor vs capacity
+# Robust Swizzling Framework
 
-Kernels profiled: [swizzle_xor.cu](kernels/swizzle_xor.cu) and [capacity.cu](kernels/capacity.cu).
+Kernels profiled: [swizzle_autotune.cu](kernels/swizzle_autotune.cu).
 
 ## TL;DR
 
-- DRAM traffic and shared-store conflicts decreased (~37%).
-- Swizzling increased on‑chip work and memory‑dependency latency (extra copies/unswizzle; degraded L1 → more L2 hits).
-- Compute IPC roughly doubled, but instruction counts and long scoreboard stalls rose sharply.
-- Net effect: ~+90% longer duration — external DRAM pressure was traded for increased on‑chip serialization/latency.
+- The 4-way shared-memory bank conflict in `capacity.cu` is caused by a row-mod-8 wraparound: every 8 lanes alias to the same bank span, so lanes `{0,8,16,24}`, `{1,9,17,25}`, … always collide.
+- `cp.async` forces 16-byte transaction granularity. With `WMMA_K = 16` each row is exactly 32 bytes (two 16-byte chunks), leaving only one non-identity permutation: swapping the left and right halves of a row.
+- A within-row swap does not change which rows collide with each other. The inter-row conflict structure is therefore immutable under any valid chunk-level swizzle.
+- **Conclusion: it is not possible to eliminate or reduce the shared-memory bank conflicts in this kernel through swizzling.** The tile geometry and `cp.async` granularity together make the conflict pattern structurally unavoidable.
 
-## Key Findings
+The goal of this run is to develop a structured swizzling framework rather than rely on ad hoc experimentation.
 
-- Shared-memory uncoalesced accesses reduced (positive).
-- Swizzling reduced shared-store bank conflicts (~37%), but shared-load bank conflicts did not improve.
-- Long scoreboard stalls increased substantially, becoming the dominant bottleneck.
-- Compute throughput rose significantly, but memory throughput and DRAM throughput fell, resulting in a longer overall duration.
-- The kernel remains memory-bound on the roofline.
+We begin by analyzing exactly how bank conflicts arise in [capacity.cu](kernels/capacity.cu), instead of iterating experimentally as in [Run 2](prof/md/run2/ncu_details.md) and [Run 3](prof/md/run3/ncu_details.md).
 
-## Detailed Analysis
+As the implementation baseline, we use [swizzle_ldmatrix.cu](kernels/swizzle_ldmatrix.cu). This path avoids the explicit unswizzle step required by the `wmma::load_matrix_sync` approach, which increased instruction count and degraded performance in [Run 3](prof/md/run3/ncu_details.md).
 
-### Bottlenecks
+## Current thread mapping - how the bank conflicts occur
 
-The estimated speedups for main bottlenecks changed compared to `capacity.cu`:
+This section derives the current shared-memory access pattern in the base kernel and shows why recurring bank-collision groups appear.
 
-- Uncoalesced Shared Accesses: reduced from ~66% to ~38% (improvement).
-- Shared Load Bank Conflicts: reduced from ~42% to ~18% (improvement for stores; loads still show conflicts).
-- Long Scoreboard Stalls: increased from ~13% to ~32% (new major issue).
-- Theoretical occupancy: unchanged.
+### 1. Lane to tile coordinates
 
-![swizzle_xor - Bottlenecks](../../images/run4/swizzle_xor_bottlenecks.jpg)
+In the staging loop, each lane starts from:
 
-### Throughput
+$i = 8 \cdot l$, where $l \in [0,31]$ is the lane id.
 
-Compute throughput increased by 103%, but kernel duration still worsened (+90%) because:
+For a $16 \times 16$ tile:
 
-- Overall memory throughput dropped to ~68% of peak.
-- DRAM throughput dropped to ~61% of peak.
-- Aggregate memory bandwidth decreased ~30% to 182.5 GB/s.
+$row = \left\lfloor \frac{i}{16} \right\rfloor = \left\lfloor \frac{l}{2} \right\rfloor$
 
-![swizzle_xor - Throughput](../../images/run4/swizzle_xor_throughput.jpg)
+$col = i \bmod 16 = (8l) \bmod 16 \in \{0,8\}$
 
-![swizzle_xor - Throughput %](../../images/run4/swizzle_xor_throughput_p.jpg)
+Interpretation: each lane writes one 16-byte segment (8 half elements) into either columns 0 to 7 or columns 8 to 15 of row $\left\lfloor l/2 \right\rfloor$. Even lanes write the first half of the row and odd lanes write the second half.
 
-### Roofline
+### 2. Shared-memory bank index
 
-Both kernels remain strongly memory bound according to the roofline analysis.
+The linear element index at position (row, col) in a WMMA_K=16 column tile is: $index = 16 \cdot row + col$
 
-![swizzle_xor - Roofline](../../images/run4/swizzle_xor_roofline.jpg)
+Hence with half precision (2 bytes per element), byte address inside the tile is:
 
-### Compute Workload
+$addr = 2 \cdot (16 \cdot row + col)$ ($col \in \{0,8\}$)
 
-Observed compute-workload metrics show ~doubling of Instruction Per Clock as well as SM core instruction throughput ("SM busy [%]").
+SRAM has 32 banks, each serving 32-bit word per cycle, hence the bank index is computed at 4-byte bank granularity:
 
-![swizzle_xor - Compute Workload](../../images/run4/swizzle_xor_compute_workload.jpg)
+$bank = \left\lfloor \frac{addr}{4} \right\rfloor \bmod 32$
 
-### Memory Workload
+So the starting bank is:
 
-- Memory throughput decreased ~30% to 182.5 GB/s.
-- 'Mem Busy' decreased ~31% and max bandwidth decreased ~21%.
-- L1 hit rate decreased ~57%; L2 hit rate increased ~93% (more L2 servicing).
-- Swizzling reduced shared-store bank conflicts by ~37%, but shared-load bank conflicts did not improve.
+- even lanes: $bank = (8 \cdot row) \bmod 32$
+- odd lanes: $bank = (8 \cdot row + 4) \bmod 32$
 
-![swizzle_xor - Memory Workload 1](../../images/run4/swizzle_xor_memory_workload_1.jpg)
+Because in [capacity.cu](kernels/capacity.cu) each lane writes 16 bytes and each bank is 4 bytes wide, one lane touches four consecutive banks starting from that bank index.
 
-![swizzle_xor - Memory Workload 2](../../images/run4/swizzle_xor_memory_workload_2.jpg)
+Exact examples for the current kernel:
 
-Close-up on the DRAM throughput reduction:
+- Lane 0: $(row, col) = (0, 0)$, $addr = 0$, start bank $= 0$, banks touched $= 0$ to $3$
+- Lane 1: $(row, col) = (0, 8)$, $addr = 16$, start bank $= 4$, banks touched $= 4$ to $7$
+- Lane 2: $(row, col) = (1, 0)$, $addr = 32$, start bank $= 8$, banks touched $= 8$ to $11$
+- Lane 3: $(row, col) = (1, 8)$, $addr = 48$, start bank $= 12$, banks touched $= 12$ to $15$
+- Lane 4: $(row, col) = (2, 0)$, $addr = 64$, start bank $= 16$, banks touched $= 16$ to $19$
+- Lane 5: $(row, col) = (2, 8)$, $addr = 80$, start bank $= 20$, banks touched $= 20$ to $23$
+- Lane 6: $(row, col) = (3, 0)$, $addr = 96$, start bank $= 24$, banks touched $= 24$ to $27$
+- Lane 7: $(row, col) = (3, 8)$, $addr = 112$, start bank $= 28$, banks touched $= 28$ to $31$
+- Lane 8: $(row, col) = (4, 0)$, $addr = 128$, start bank $= 0$, banks touched $= 0$ to $3$
+- Lane 9: $(row, col) = (4, 8)$, $addr = 144$, start bank $= 4$, banks touched $= 4$ to $7$
+- Lane 10: $(row, col) = (5, 0)$, $addr = 160$, start bank $= 8$, banks touched $= 8$ to $11$
+- Lane 11: $(row, col) = (5, 8)$, $addr = 176$, start bank $= 12$, banks touched $= 12$ to $15$
+- Lane 12: $(row, col) = (6, 0)$, $addr = 192$, start bank $= 16$, banks touched $= 16$ to $19$
+- Lane 13: $(row, col) = (6, 8)$, $addr = 208$, start bank $= 20$, banks touched $= 20$ to $23$
+- Lane 14: $(row, col) = (7, 0)$, $addr = 224$, start bank $= 24$, banks touched $= 24$ to $27$
+- Lane 15: $(row, col) = (7, 8)$, $addr = 240$, start bank $= 28$, banks touched $= 28$ to $31$
 
-![swizzle_xor - Memory Workload 3](../../images/run4/swizzle_xor_memory_workload_3.jpg)
+This already shows the wraparound: lane 8 returns to the same bank span as lane 0.
 
-### Scheduler Statistics
+### 3. Exact collisions
 
-Scheduler eligibility and issue rates improved (eligible ↑170% toward 1.0, issued ↑100%), but these improvements could not overcome the new on-chip latency sources.
+Exact collision groups in the current kernel:
 
-![swizzle_xor - Scheduler Statistics](../../images/run4/swizzle_xor_scheduler_stats.jpg)
+- Lanes $\{0, 8, 16, 24\}$ all hit banks $0$ to $3$
+- Lanes $\{1, 9, 17, 25\}$ all hit banks $4$ to $7$
+- Lanes $\{2, 10, 18, 26\}$ all hit banks $8$ to $11$
+- Lanes $\{3, 11, 19, 27\}$ all hit banks $12$ to $15$
+- Lanes $\{4, 12, 20, 28\}$ all hit banks $16$ to $19$
+- Lanes $\{5, 13, 21, 29\}$ all hit banks $20$ to $23$
+- Lanes $\{6, 14, 22, 30\}$ all hit banks $24$ to $27$
+- Lanes $\{7, 15, 23, 31\}$ all hit banks $28$ to $31$
 
-### Warp State Statistics
+So the current mapping is a 4-way bank-conflict pattern.
 
-Warp cycle activity improved (warp cycles reduced ~50%), indicating better warp-level work distribution.
+## Swizzling — Framework
 
-![swizzle_xor - Warp State Statistics](../../images/run4/swizzle_xor_warp_state_stats.jpg)
+For this kernel, swizzling must respect the `cp.async` transaction size: one `cp.async` moves 16 bytes, which here is exactly 8 half values. With `WMMA_K = 16`, each row contains 16 half values = 32 bytes total, so each row is split into exactly two 16-byte chunks: columns 0 to 7 and columns 8 to 15.
 
-### Instruction Statistics
+That means the swizzle unit is the chunk, not individual half elements. As a result, for this tile shape the only non-identity chunk-level permutation is to swap the left and right half of the row. More complex intra-row swizzles would require breaking a 16-byte transaction, which is not compatible with this `cp.async` staging pattern.
 
-Instruction counts increased substantially (executed and issued ↑~270%), contributing to higher on-chip pressure and longer execution.
+## Autotuning plan
 
-![swizzle_xor - Instruction Statistics](../../images/run4/swizzle_xor_warp_state_stats.jpg)
+1. Represent the swizzle as a 16-bit row mask, where each bit selects whether that row swaps its left and right 16-byte halves.
+2. Apply the swap on the `ldmatrix` consumer side, while keeping `cp.async` producer stores linear and coalesced.
+3. Tune the row mask, starting from simple structured patterns and ranking candidates by duration.
+4. Validate each strong candidate against the non-swizzled reference to confirm correctness.
 
-### Launch Statistics
+## Conclusion
 
-No major changes in launch parameters other than a modest increase in register pressure.
+The autotuning investigation confirms the theoretical prediction above. Despite an exhaustive search over all 65 536 possible row-mask patterns, no swizzle configuration reduced bank conflicts or improved kernel duration relative to the unswizzled baseline.
 
-![swizzle_xor - Launch Statistics](../../images/run4/swizzle_xor_launch_stats.jpg)
+The root cause is structural:
 
-### GPU and Memory Workload
+- Bank conflicts arise because the staging loop maps lanes `{0, 8, 16, 24}` to the same bank span, `{1, 9, 17, 25}` to the next, and so on — a period-8 wraparound over the 32 SRAM banks.
+- The only degree of freedom available under the 16-byte `cp.async` constraint is a per-row left/right half swap. This permutes elements *within* a row but leaves the bank assignment of each row unchanged.
+- Because the conflict pattern is determined by *which rows* different lanes access, and not by the intra-row ordering, no row-mask swizzle can break the collision groups.
 
-Average active cycles increased for DRAM by ~33%; for SM, SMSP, L1 and L2 the average active cycles rose by ~90%.
+Swizzling is therefore not a viable optimisation path for this kernel. The bank conflict is a consequence of the tile geometry (`WMMA_K = 16`, 16-byte transaction size, 32-lane warp) and cannot be resolved without changing one of those constraints — for example, by using a wider tile, a different staging granularity, or padding the shared-memory row stride.
 
-![swizzle_xor - GPU and Memory Workload](../../images/run4/swizzle_xor_gpu_and_memory_workload.jpg)
+### Alternative: Smaller `cp.async` Transaction Sizes
 
+`cp.async` also supports 8-byte and 4-byte transactions. Dropping to 8-byte would split each row into 4 chunks instead of 2, and 4-byte into 8 chunks, unlocking finer-grained intra-row permutations that could in principle change the bank assignment of individual chunks and break the conflict groups.
+
+However, this is not a viable path. Moving the same data volume requires 2× (8-byte) or 4× (4-byte) as many `cp.async` instructions. Run 4 already demonstrated that a sharp increase in instruction count — even when bank conflicts are partially resolved — shifts the dominant bottleneck from DRAM/shared-memory pressure to instruction-throughput and long scoreboard stalls, and resulted in a +90% regression in kernel duration. Multiplying `cp.async` count to fix a 4-way bank conflict would produce the same trade-off or worse, since the instruction overhead is a guaranteed cost while the conflict saving is bounded. This path would only be worth exploring if NCU were to show bank-conflict stalls as the clear dominant bottleneck, which is not the case here.
 

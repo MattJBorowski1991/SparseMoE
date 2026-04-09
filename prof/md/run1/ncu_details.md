@@ -1,4 +1,4 @@
- # Run 1 — Nsight Compute: Summary
+ # First Nsight Compute comparison
 
 Kernels profiled: [unfused.cu](kernels/unfused.cu), [baseline.cu](kernels/baseline.cu) and [capacity.cu](kernels/capacity.cu)
 
@@ -122,7 +122,7 @@ Note: the `33.02 Kbyte/block` static shared-memory figure comes from two WMMA do
 
 This section presents a focused analysis of Nsight Compute results for [capacity.cu](kernels/capacity.cu). 
 
-It highlights the primary bottlenecks, the source-level causes identified by the profiler, and concise recommendations for targeted fixes. For broader comparisons and additional detail see [Run 2](prof/md/run2/ncu_details.md).
+It highlights the primary bottlenecks, the source-level causes identified by the profiler, and concise recommendations for targeted fixes. 
 
 ![Capacity - Bottlenecks](../../images/run1/capacity_bottlenecks.jpg)
 
